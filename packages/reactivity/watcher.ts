@@ -25,6 +25,12 @@ export class Watcher {
   sync: boolean = false
   before: Function = noop
   handler: Function = noop
+  // 避免重复依赖收集
+  newDepIds: Set<number> = new Set()
+  newDeps: Dep[] = []
+  depIds: Set<number> = new Set()
+  deps: Dep[] = []
+  active: boolean = true
 
   constructor(vm: Seed, expOrFunc: ExpOrFunc, options: WatcherOptions) {
     this._uid = uid++
@@ -55,23 +61,61 @@ export class Watcher {
   get() {
     pushTarget(this)
     let value
-    value = this.getter.call(this.vm, this.vm)
-    this.value = value
-    if (this.deep) {
-      // 深度依赖收集
-      tranverse(this.value)
+    try {
+      value = this.getter.call(this.vm, this.vm)
+    } catch (e) {
+      throw e
+    } finally {
+      if (this.deep) {
+        // 深度依赖收集
+        tranverse(value)
+      }
+      popTarget()
+      // 一次依赖收集完成
+      this.cleanDeps()
     }
-    popTarget()
+
     return value
   }
 
   addDep(dep: Dep) {
-    //   get name:2 ,添加2次该watcher，则更新时update2次
-    dep.addSub(this)
-    console.log(
-      'watcher add Dep',
-      dep.subs.map((w) => w._uid)
-    )
+    //   get name:2 ,添加2次该watcher，则更新时update2次?
+    // dep.addSub(this)
+    // console.log(
+    //   'watcher add Dep',
+    //   dep.subs.map((w) => w._uid)
+    // )
+    const depId = dep._uid
+
+    if (!this.newDepIds.has(depId)) {
+      // 避免一次依赖收集中收集多个值
+      this.newDepIds.add(depId)
+      this.newDeps.push(dep)
+      // 避免多次收集时重复
+      if (!this.depIds.has(depId)) {
+        dep.addSub(this) // 添加watcher
+      }
+    }
+  }
+  // 去除不需要监听dep的watcher，
+  // 设置上一次收集的依赖deps
+  // 清空newdeps
+  cleanDeps() {
+    let deps = this.deps
+    for (let i = 0; i < deps.length; i++) {
+      if (!this.newDepIds.has(deps[i]._uid)) {
+        // 这个值不再监听
+        deps[i].removeSub(this)
+      }
+    }
+    let tmp = this.depIds
+    this.depIds = this.newDepIds
+    this.newDepIds = tmp
+    this.newDepIds.clear()
+    let tmp2 = this.deps
+    this.deps = this.newDeps
+    this.newDeps = tmp2
+    this.newDeps.length = 0 // clear
   }
 
   update() {
@@ -79,23 +123,36 @@ export class Watcher {
     this.run()
   }
   run() {
-    let newValue = this.get() // 值发生变化后，重新收集一遍该依赖
-    console.log(
-      'need update?',
-      newValue,
-      newValue !== this.value ||
+    if (this.active) {
+      let newValue = this.get() // 值发生变化后，重新收集一遍该依赖
+      console.log(
+        'need update?',
+        { newValue, value: this.value },
+        newValue !== this.value ||
+          isObject(newValue) ||
+          isArray(newValue) ||
+          this.deep
+      )
+      if (
+        newValue !== this.value ||
         isObject(newValue) ||
         isArray(newValue) ||
         this.deep
-    )
-    if (
-      newValue !== this.value ||
-      isObject(newValue) ||
-      isArray(newValue) ||
-      this.deep
-    ) {
-      // 值发生变化，调用回调
-      this.handler.call(this.vm, newValue, this.value)
+      ) {
+        // 值发生变化，调用回调
+        this.handler.call(this.vm, newValue, this.value)
+      }
+    }
+  }
+
+  // 使该watcher失效
+  teardown() {
+    if (this.active) {
+      // todo:从vm.watchers中删除当前watcher
+      for (let i = 0, l = this.deps.length; i < l; i++) {
+        this.deps[i].removeSub(this)
+      }
+      this.active = false
     }
   }
 }

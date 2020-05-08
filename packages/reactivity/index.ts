@@ -1,6 +1,6 @@
 import { isArray, isObject, isNotANumber } from '../utils'
 import { Dep } from './dep'
-
+import { arrayMethods } from './array'
 export class Observer {
   value?: any
   dep: Dep
@@ -9,6 +9,7 @@ export class Observer {
     // 对象
     if (isArray(value)) {
       // 监听数组
+      protoAugment(value as any, arrayMethods)
     } else {
       // 监听对象
       this.walk(value)
@@ -27,6 +28,12 @@ export class Observer {
     const keys = Object.keys(obj)
     for (let i = 0; i < keys.length; i++) {
       defineReactive(obj, keys[i])
+    }
+  }
+
+  observeArray(arr: any[]) {
+    for (let i = 0; i < arr.length; i++) {
+      observe(arr[i]) // 如果值是对象类型，进一步observe
     }
   }
 }
@@ -68,16 +75,19 @@ export function defineReactive(
     configurable: true,
     enumerable: true,
     get: function reactiveGetter() {
-    //   console.log('==触发get==', key, val)
+      //   console.log('==触发get==', key, val)
       if (Dep.target) {
         //   add watcher to deps
         dep.depend() // 值的dep
         // childOb
         if (childOb) {
           childOb.dep.depend()
-          console.log("监听子元素",value)
+          console.log('监听子元素', value)
           console.log('childOb', childOb.dep)
           // 数组，另外处理
+          if (isArray(value)) {
+            dependArray(value)
+          }
         }
       }
       return value
@@ -93,4 +103,20 @@ export function defineReactive(
       dep.notify()
     },
   })
+}
+
+function protoAugment(array: any[] & { __proto__: any }, proto: any) {
+  array.__proto__ = proto
+}
+
+function dependArray(array: any[]) {
+  for (let i = 0, l = array.length; i < l; i++) {
+    let e = array[i]
+    if (e && e.__ob__) {
+      ;(e.__ob__ as Observer).dep.depend()
+    }
+    if (isArray(e)) {
+      dependArray(e)
+    }
+  }
 }

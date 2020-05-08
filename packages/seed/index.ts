@@ -1,9 +1,11 @@
 import { noop, isPlainObject } from '../utils'
 import { Watcher, ExpOrFunc, WatcherOptions } from '../reactivity/watcher'
+import { observe } from '../reactivity'
 
 interface Options {
   data?: (vm: Seed) => Object
   methods?: Record<string, Function>
+  props?: Record<string, any>
   // watch?:Object,
   // computed?:Object,
   // props?:Object
@@ -12,8 +14,8 @@ let uid = 0
 export class Seed {
   isVm: boolean
   _uid: number
-  _options: Options
-  $options?: Options
+  _options: Options // 原始配置
+  $options: Options = {} // 序列化后配置
   _watchers: Watcher[] = [];
   [key: string]: any
 
@@ -30,59 +32,72 @@ export class Seed {
 
   private _init() {
     this.normalizeOptions()
-    this._initMethods()
+    if (this.$options.props) {
+      this._initProps()
+    }
+    if (this.$options.methods) {
+      this._initMethods()
+    }
+
     // init state
     this._watchers = []
-    this._initData()
+    if (this.$options.data) {
+      this._initData()
+    }
   }
 
   private _initMethods() {
     const { methods } = this.$options as Options
-    if (methods) {
-      if (!isPlainObject(methods)) {
-        console.warn('methods不是普通对象')
-        return
+    if (!isPlainObject(methods)) {
+      console.warn('methods不是普通对象')
+      return
+    }
+    for (let key in methods) {
+      // warn
+      if (typeof methods[key] !== 'function') {
+        console.warn(`methods ${key} 不是一个方法`)
       }
-      for (let key in methods) {
-        // warn
-        if (typeof methods[key] !== 'function') {
-          console.warn(`methods ${key} 不是一个方法`)
-        }
 
-        if (typeof methods[key] === 'function') {
-          this[key] = methods[key].bind(this)
-        } else {
-          this[key] = noop
-        }
+      if (typeof methods[key] === 'function') {
+        this[key] = methods[key].bind(this)
+      } else {
+        this[key] = noop
       }
     }
   }
 
   private _initData() {
     const { data } = this.$options as Options
-    if (data) {
-      if (typeof data !== 'function') {
-        console.warn('data 必须是一个函数')
-        return
-      }
-      // get data object
-      const _data = data.call(this, this) || {}
-      this._data = _data
-
-      Object.keys(_data).forEach((key) => {
-        if (key in this) {
-          console.warn(`${key} in data 已经定义过`)
-        }
-        proxy(this, '_data', key)
-      })
-      //   对_data进行observe
+    if (typeof data !== 'function') {
+      console.warn('data 必须是一个函数')
+      return
     }
+    // get data object
+    const _data = data.call(this, this) || {}
+    this._data = _data
+
+    Object.keys(_data).forEach((key) => {
+      if (key in this) {
+        console.warn(`${key} in data 已经定义过`)
+      }
+      proxy(this, '_data', key)
+    })
+    //   对_data进行observe
+    observe(_data)
   }
+  // TODO:
+  private _initProps() {}
+
+  private _initComputed(){}
+
   //   创建watch的时候会直接进行依赖收集
   $watch(expOrFunction: ExpOrFunc, options: WatcherOptions) {
     options.userDefined = true
     const watcher = new Watcher(this, expOrFunction, options)
     // return unwatch
+    return function unwatch() {
+      watcher.teardown()
+    }
   }
 }
 
