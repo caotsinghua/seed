@@ -3,7 +3,8 @@ import { noop, isObject } from '../utils'
 import { pushTarget, popTarget, Dep } from './dep'
 import { isArray } from 'util'
 import { Observer } from '.'
-type WatchGetter = (obj: any) => any
+import { queueWatcher } from './scheduler'
+export type WatchGetter = (vm: Seed) => any
 export type ExpOrFunc = string | WatchGetter
 export interface WatcherOptions {
   handler: Function
@@ -11,6 +12,7 @@ export interface WatcherOptions {
   deep?: boolean
   sync?: boolean
   before?: Function
+  lazy?: boolean
 }
 
 let uid = 0
@@ -24,6 +26,8 @@ export class Watcher {
   userDefined: boolean = false
   sync: boolean = false
   before: Function = noop
+  lazy: boolean = false
+  dirty: boolean = false
   handler: Function = noop
   // 避免重复依赖收集
   newDepIds: Set<number> = new Set()
@@ -46,6 +50,7 @@ export class Watcher {
     this.deep = !!options.deep
     this.userDefined = !!options.userDefined
     this.sync = !!options.sync
+    this.dirty = this.lazy = !!options.lazy
     if (typeof options.before === 'function') {
       this.before = options.before
     }
@@ -76,6 +81,13 @@ export class Watcher {
     }
 
     return value
+  }
+
+  evaluate() {
+    if (this.dirty) {
+      this.value = this.get() // 获取最新的值
+      this.dirty = false // 缓存，只有当值变化的时候才重新获取值，否则还是使用缓存。
+    }
   }
 
   addDep(dep: Dep) {
@@ -119,9 +131,20 @@ export class Watcher {
   }
 
   update() {
-    // 同步更新
-    this.run()
+    // getter中的值触发了set
+    if (this.lazy) {
+      // 下一次成功惰性evaluate
+      this.dirty = true
+    } else if (this.sync) {
+      // 同步
+      // 触发回调
+      this.run()
+    } else {
+      // 添加到异步队列，下个tick触发
+      queueWatcher(this)
+    }
   }
+  // 同步更新
   run() {
     if (this.active) {
       let newValue = this.get() // 值发生变化后，重新收集一遍该依赖
@@ -139,8 +162,10 @@ export class Watcher {
         isArray(newValue) ||
         this.deep
       ) {
+        const oldValue = this.value
+        this.value = newValue
         // 值发生变化，调用回调
-        this.handler.call(this.vm, newValue, this.value)
+        this.handler.call(this.vm, newValue, oldValue)
       }
     }
   }
@@ -153,6 +178,12 @@ export class Watcher {
         this.deps[i].removeSub(this)
       }
       this.active = false
+    }
+  }
+  depend() {
+    for (let i = 0, l = this.deps.length; i < l; i++) {
+      // 当触发computed的值的get的时候，对于computed里用到的每个值的dep进行依赖收集
+      this.deps[i].depend()
     }
   }
 }

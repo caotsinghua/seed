@@ -7,14 +7,16 @@
     - [x] watcher，get收集依赖，默认浅层收集，可deep。
         - [x]todo:防止重复依赖收集，一次取值时/多次取值时
     - [x] dep
-    - [ ] nexttick 异步更新
+    - [x] nexttick 异步更新
+        - [ ] nexttick方案演变过程及原因
+        - [ ]在watcher queue执行过程中又有watcher更新的处理
     - [ ] proxy实现 (like 3.0)
 
 2. seed
     - [x] Seed class
         - init data,observe data
         - init methods
-        - [ ] init computed
+        - init computed
         - [ ] init props
     - [x] vm.$watch
 

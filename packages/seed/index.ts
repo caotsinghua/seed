@@ -1,14 +1,26 @@
 import { noop, isPlainObject } from '../utils'
-import { Watcher, ExpOrFunc, WatcherOptions } from '../reactivity/watcher'
+import {
+  Watcher,
+  ExpOrFunc,
+  WatcherOptions,
+  WatchGetter,
+} from '../reactivity/watcher'
 import { observe } from '../reactivity'
+import { Dep } from '../reactivity/dep'
 
 interface Options {
   data?: (vm: Seed) => Object
   methods?: Record<string, Function>
   props?: Record<string, any>
   // watch?:Object,
-  // computed?:Object,
+  computed?: ComputedOption
   // props?:Object
+}
+interface ComputedOption {
+  [key: string]: {
+    get: WatchGetter
+    set?: (val: any) => void
+  }
 }
 let uid = 0
 export class Seed {
@@ -16,7 +28,8 @@ export class Seed {
   _uid: number
   _options: Options // 原始配置
   $options: Options = {} // 序列化后配置
-  _watchers: Watcher[] = [];
+  _watchers: Watcher[] = []
+  _computedWatchers: Map<string, Watcher> = new Map();
   [key: string]: any
 
   constructor(options: Options) {
@@ -32,22 +45,25 @@ export class Seed {
 
   private _init() {
     this.normalizeOptions()
-    if (this.$options.props) {
-      this._initProps()
-    }
+    // TODO:props
+    // if (this.$options.props) {
+    //   this._initProps()
+    // }
     if (this.$options.methods) {
-      this._initMethods()
+      this._initMethods(this.$options.methods)
     }
 
     // init state
     this._watchers = []
     if (this.$options.data) {
-      this._initData()
+      this._initData(this.$options.data)
+    }
+    if (this.$options.computed) {
+      this._initComputed(this.$options.computed)
     }
   }
 
-  private _initMethods() {
-    const { methods } = this.$options as Options
+  private _initMethods(methods: Record<string, Function>) {
     if (!isPlainObject(methods)) {
       console.warn('methods不是普通对象')
       return
@@ -66,8 +82,7 @@ export class Seed {
     }
   }
 
-  private _initData() {
-    const { data } = this.$options as Options
+  private _initData(data: Function) {
     if (typeof data !== 'function') {
       console.warn('data 必须是一个函数')
       return
@@ -88,7 +103,42 @@ export class Seed {
   // TODO:
   private _initProps() {}
 
-  private _initComputed(){}
+  private _initComputed(computed: ComputedOption) {
+    const watchers = this._computedWatchers
+    const keys = Object.keys(computed)
+    for (let i = 0, l = keys.length; i < l; i++) {
+      const key = keys[i]
+      const userDef = computed[key]
+      const getter = userDef.get
+      watchers.set(
+        key,
+        new Watcher(this, getter, {
+          handler: noop,
+          lazy: true,
+        })
+      )
+      if (!(key in this)) {
+        // 劫持get
+        Object.defineProperty(this, key, {
+          enumerable: true,
+          configurable: true,
+          get() {
+            const watcher:
+              | Watcher
+              | undefined = (this as Seed)._computedWatchers.get(key)
+            if (watcher) {
+              watcher.evaluate() // 惰性求值
+              if (Dep.target) {
+                watcher.depend() // 收集依赖
+              }
+              return watcher.value
+            }
+          },
+          set: userDef.set || noop,
+        })
+      }
+    }
+  }
 
   //   创建watch的时候会直接进行依赖收集
   $watch(expOrFunction: ExpOrFunc, options: WatcherOptions) {
