@@ -8,7 +8,7 @@
         - [x]todo:防止重复依赖收集，一次取值时/多次取值时
     - [x] dep
     - [x] nexttick 异步更新
-        - [ ] nexttick方案演变过程及原因
+        - [x] nexttick方案演变过程及原因
         - [x]在watcher queue执行过程中又有watcher更新的处理
     - [ ] proxy实现 (like 3.0)
 
