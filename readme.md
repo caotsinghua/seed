@@ -9,7 +9,7 @@
     - [x] dep
     - [x] nexttick 异步更新
         - [ ] nexttick方案演变过程及原因
-        - [ ]在watcher queue执行过程中又有watcher更新的处理
+        - [x]在watcher queue执行过程中又有watcher更新的处理
     - [ ] proxy实现 (like 3.0)
 
 2. seed
@@ -17,7 +17,7 @@
         - init data,observe data
         - init methods
         - init computed
-        - [ ] init props
+        - init props
     - [x] vm.$watch
 
 3. vdom & patch (like 3.0)

@@ -1,6 +1,11 @@
 import { isArray, isObject, isNotANumber } from '../utils'
 import { Dep } from './dep'
 import { arrayMethods } from './array'
+
+export let shouldObserve = true
+export function toggleObserver(val: boolean) {
+  shouldObserve = val
+}
 export class Observer {
   value?: any
   dep: Dep
@@ -46,16 +51,27 @@ export function observe(obj: Object) {
 
   if (obj.hasOwnProperty('__ob__') && (obj as any).__ob__ instanceof Observer) {
     ob = (obj as any).__ob__
-  } else {
+  } else if (shouldObserve) {
     ob = new Observer(obj)
   }
 
   return ob
 }
-
 export function defineReactive(
   obj: Record<string, any>,
   key: string,
+  shallow?: boolean
+): void
+export function defineReactive(
+  obj: Record<string, any>,
+  key: string,
+  val: any,
+  shallow?: boolean
+): void
+export function defineReactive(
+  obj: Record<string, any>,
+  key: string,
+  val?: any,
   shallow: boolean = false
 ) {
   const dep = new Dep(key)
@@ -63,8 +79,13 @@ export function defineReactive(
   if (propertyDescriptor && !propertyDescriptor.configurable) {
     return
   }
+  let value: any // 初始值
 
-  let value = obj[key] // 初始值
+  if (arguments.length === 2) {
+    value = obj[key]
+  } else {
+    value = val
+  }
 
   // 如果value时对象类型，对该对象进行observe(shallow=true)
   //   则对该属性监听的handler，也适用于子对象

@@ -1,20 +1,31 @@
-import { noop, isPlainObject } from '../utils'
+import { noop, isPlainObject, isUndefined } from '../utils'
 import {
   Watcher,
   ExpOrFunc,
   WatcherOptions,
   WatchGetter,
 } from '../reactivity/watcher'
-import { observe } from '../reactivity'
+import {
+  observe,
+  defineReactive,
+  toggleObserver,
+  shouldObserve,
+} from '../reactivity'
 import { Dep } from '../reactivity/dep'
 
+///////////////////////////////////////
+// 能够引起视图更新的
+// props，data，
+// computed中引用的值
+//
+//////////////////////////////////////
 interface Options {
   data?: (vm: Seed) => Object
   methods?: Record<string, Function>
-  props?: Record<string, any>
+  props?: Props
+  propsData?: PropsData
   // watch?:Object,
   computed?: ComputedOption
-  // props?:Object
 }
 interface ComputedOption {
   [key: string]: {
@@ -22,6 +33,14 @@ interface ComputedOption {
     set?: (val: any) => void
   }
 }
+
+interface Props {
+  [key: string]: {
+    default?: () => any
+  }
+}
+type PropsData = Record<string, any>
+
 let uid = 0
 export class Seed {
   isVm: boolean
@@ -29,7 +48,9 @@ export class Seed {
   _options: Options // 原始配置
   $options: Options = {} // 序列化后配置
   _watchers: Watcher[] = []
-  _computedWatchers: Map<string, Watcher> = new Map();
+  _computedWatchers: Map<string, Watcher> = new Map()
+  _data: Record<string, any> = {}
+  _props: Props = {};
   [key: string]: any
 
   constructor(options: Options) {
@@ -45,10 +66,10 @@ export class Seed {
 
   private _init() {
     this.normalizeOptions()
-    // TODO:props
-    // if (this.$options.props) {
-    //   this._initProps()
-    // }
+
+    if (this.$options.props) {
+      this._initProps(this.$options.props)
+    }
     if (this.$options.methods) {
       this._initMethods(this.$options.methods)
     }
@@ -101,7 +122,36 @@ export class Seed {
     observe(_data)
   }
   // TODO:
-  private _initProps() {}
+  // 监听props的key的值是否变更
+  // 深度监听prop的值本身
+  // props的值从propsData中来
+  // 每次render产生新的propsData，
+  private _initProps(props: Props) {
+    const _props = (this._props = {}) // key:propsData[key]
+    const propsData = this.$options.propsData || {}
+
+    const propKeys = Object.keys(props)
+    toggleObserver(false)
+    for (let i = 0, l = propKeys.length; i < l; i++) {
+      let key = propKeys[i]
+      let value
+      if (!isUndefined(propsData[key])) {
+        value = propsData[key] // 触发propsData[key]的getter，添加当前watcher
+      } else if (typeof props[key].default === 'function') {
+        value = (props[key].default as Function)()
+      }
+      let prevState = shouldObserve
+      toggleObserver(true)
+      observe(value)
+      toggleObserver(prevState)
+      // 这里不再observe
+      defineReactive(_props, key, value)
+      if (!(key in this)) {
+        proxy(this, '_props', key) // this.key = this._props.key
+      }
+    }
+    toggleObserver(true)
+  }
 
   private _initComputed(computed: ComputedOption) {
     const watchers = this._computedWatchers

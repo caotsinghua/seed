@@ -19,7 +19,7 @@ function flushWatcherQueue() {
     has.delete(watcher._uid)
     watcher.run()
   }
-  resetScheduleState() // 执行完毕
+  resetScheduleState() // 执行完毕,waiting=false ...
 
 //   更新完成，应该调用activated(keep alive) updated周期
 }
@@ -39,15 +39,19 @@ export function queueWatcher(watcher: Watcher) {
         // 不在更新过程中
         queue.push(watcher)
     }else{
-        // TODO:
-        // 插入队列的正确位置，因为这里不再排序
 
+        // 插入队列的正确位置，因为这里不再排序
+        let i=queue.length-1;
+        while(i>index && id < queue[i]._uid){
+          i--;
+        }
+        queue.splice(i+1,0,watcher)
     }
 
 
     if (!waiting) {
       waiting = true
-      nextTick(flushWatcherQueue)
+      nextTick(flushWatcherQueue) // flushing=true
     }
   }
 }
