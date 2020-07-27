@@ -1,8 +1,9 @@
-interface VNode {
+interface VNode<P = any> {
   type: VNodeType
-  key?: string
-  data: VNodeData
-  children: VNode[]
+  props: P
+  children: ComponentChild[] | ComponentChild
+  key: Key
+  ref?: Ref<any> | null
   _isVNode: boolean
   _depth: number
   _el: any
@@ -10,6 +11,18 @@ interface VNode {
   _parent: VNode | null
 }
 
+type Key = string | number
+type RefObject<T> = { current?: T | null }
+type RefCallback<T> = (instance: T | null) => void
+type Ref<T> = RefObject<T> | RefCallback<T>
+type ComponentChild =
+  | VNode<any>
+  | object
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
 class Component {
   static defaultProps: PropsType | null = null
 }
@@ -21,21 +34,31 @@ type ComponentType = {
   new (): Component
   defaultProps: PropsType | null
 }
-type VNodeType = string | ComponentType
-
+type VNodeType = string | ComponentType | Symbol
+export const TEXT_NODE_TYPE = Symbol('text')
 interface VNodeData {
   [key: string]: any
 }
-function createVNode(
+
+// 配置createElement时传入的data
+interface VNodePropsOptions {
+  key?: Key
+  ref?: Ref<any>
+  [key: string]: any
+}
+
+export function createVNode(
   type: VNodeType,
   vnodeData: VNodeData = {},
-  children: VNode[],
-  key?: string
+  children: ComponentChild[],
+  key?: Key,
+  ref?: Ref<any>
 ): VNode {
   const vnode: VNode = {
     type,
-    data: vnodeData,
-    key,
+    props: vnodeData,
+    key: key as string,
+    ref: ref,
     children,
     _depth: 0,
     _el: null,
@@ -47,33 +70,77 @@ function createVNode(
   return vnode
 }
 
-function createElement(
+export function createTextVNode(text?: string | null) {
+  const vnode: VNode = {
+    type: TEXT_NODE_TYPE,
+    props: {},
+    key: '',
+    children: text || '',
+    _depth: 0,
+    _el: null,
+    _self: null,
+    _parent: null,
+    _isVNode: true,
+  }
+  vnode._self = vnode
+  return vnode
+}
+
+export function createElement(
   type: VNodeType,
-  data: VNodeData = {},
-  children: VNode[]
+  data: VNodePropsOptions | null = {},
+  children: ComponentChild[] | ComponentChild
 ) {
-  let normalizedProps = Object.create(null)
-  let normalizedChildren = children.slice()
-  Object.keys(data).forEach((key) => {
-    if (key !== 'key' && key !== 'ref') {
-      normalizedProps[key] = data[key]
-    }
-  })
+  let normalizedChildren: ComponentChild[] = []
+  if (Array.isArray(children)) {
+    normalizedChildren = children.slice()
+  } else {
+    normalizedChildren = [children]
+  }
   if (arguments.length > 3) {
     for (let i = 3; i < arguments.length; i++) {
       normalizedChildren.push(arguments[i])
     }
   }
+  // 解析非vnode类型的children
+  for (let i = 0; i < normalizedChildren.length; i++) {
+    const child = normalizedChildren[i]
+    if (
+      typeof child === 'string' ||
+      typeof child === 'number' ||
+      typeof child === 'boolean' ||
+      child === null ||
+      child === undefined ||
+      (typeof child === 'object' && !(child as any)._isVNode)
+    ) {
+      normalizedChildren[i] = createTextVNode(
+        child == null ? child : '' + child
+      )
+    }
+  }
+  // == 初始化vnodedata
+  let normalizedProps = Object.create(null)
+  if (data) {
+    Object.keys(data).forEach((key) => {
+      if (key !== 'key' && key !== 'ref') {
+        normalizedProps[key] = data[key]
+      }
+    })
+  }
 
+  // 对组件类型含有defaultprops的，进行赋值
   if (typeof type === 'function' && type.defaultProps != null) {
     for (let key in type.defaultProps) {
-      normalizedProps[key] = type.defaultProps[key]
+      if (normalizedProps[key] === void 0) {
+        normalizedProps[key] = type.defaultProps[key]
+      }
     }
   }
   return createVNode(
     type,
     normalizedProps,
     normalizedChildren,
-    data.key || undefined
+    data?.key,
+    data?.ref
   )
 }
