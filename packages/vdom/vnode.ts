@@ -1,7 +1,6 @@
-interface VNode<P = any> {
+export interface VNode<P = any> {
   type: VNodeType
-  props: P
-  children: ComponentChild[] | ComponentChild
+  props: P & { children: ComponentChild[] }
   key: Key
   ref?: Ref<any> | null
   _isVNode: boolean
@@ -34,7 +33,7 @@ type ComponentType = {
   new (): Component
   defaultProps: PropsType | null
 }
-type VNodeType = string | ComponentType | Symbol
+type VNodeType = string | ComponentType | Symbol | Function
 export const TEXT_NODE_TYPE = Symbol('text')
 interface VNodeData {
   [key: string]: any
@@ -50,7 +49,6 @@ interface VNodePropsOptions {
 export function createVNode(
   type: VNodeType,
   vnodeData: VNodeData = {},
-  children: ComponentChild[],
   key?: Key,
   ref?: Ref<any>
 ): VNode {
@@ -59,7 +57,6 @@ export function createVNode(
     props: vnodeData,
     key: key as string,
     ref: ref,
-    children,
     _depth: 0,
     _el: null,
     _self: null,
@@ -73,9 +70,8 @@ export function createVNode(
 export function createTextVNode(text?: string | null) {
   const vnode: VNode = {
     type: TEXT_NODE_TYPE,
-    props: {},
+    props: text,
     key: '',
-    children: text || '',
     _depth: 0,
     _el: null,
     _self: null,
@@ -129,18 +125,21 @@ export function createElement(
   }
 
   // 对组件类型含有defaultprops的，进行赋值
-  if (typeof type === 'function' && type.defaultProps != null) {
+  if (
+    typeof type === 'function' &&
+    'defaultProps' in type &&
+    type.defaultProps
+  ) {
     for (let key in type.defaultProps) {
       if (normalizedProps[key] === void 0) {
         normalizedProps[key] = type.defaultProps[key]
       }
     }
   }
-  return createVNode(
-    type,
-    normalizedProps,
-    normalizedChildren,
-    data?.key,
-    data?.ref
-  )
+  normalizedProps.children = normalizedChildren
+  return createVNode(type, normalizedProps, data?.key, data?.ref)
+}
+
+export function Fragment(props: any & { children: ComponentChild[] }) {
+  return props.children
 }
