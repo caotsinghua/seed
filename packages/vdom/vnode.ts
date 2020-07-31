@@ -8,6 +8,7 @@ export interface VNode<P = any> {
   _el: any
   _self: VNode | null
   _parent: VNode | null
+  _original: VNode | null
 }
 
 type Key = string | number
@@ -22,7 +23,7 @@ type ComponentChild =
   | boolean
   | null
   | undefined
-class Component {
+export class Component {
   static defaultProps: PropsType | null = null
 }
 
@@ -62,6 +63,7 @@ export function createVNode(
     _self: null,
     _parent: null,
     _isVNode: true,
+    _original: null,
   }
   vnode._self = vnode
   return vnode
@@ -77,6 +79,7 @@ export function createTextVNode(text?: string | null) {
     _self: null,
     _parent: null,
     _isVNode: true,
+    _original: null,
   }
   vnode._self = vnode
   return vnode
