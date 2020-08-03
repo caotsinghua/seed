@@ -1,7 +1,9 @@
 import { VNode, createElement, Fragment } from './vnode'
 import { mount } from './mount'
 import { diff } from './diff'
-export type SeedElement = HTMLElement & SVGElement & { _children?: VNode }
+export type SeedElement = (HTMLElement | SVGElement | Text) & {
+  _children?: VNode
+}
 const GLOBAL_CONTEXT = {}
 function render(vnode: VNode, parentDom: SeedElement) {
   const oldNode = parentDom._children
@@ -14,7 +16,7 @@ function render(vnode: VNode, parentDom: SeedElement) {
     vnode,
     oldNode || ({} as any),
     GLOBAL_CONTEXT,
-    parentDom.ownerSVGElement !== undefined,
+    (parentDom as SVGElement).ownerSVGElement !== undefined,
     null,
     commitQueue,
     {} as any

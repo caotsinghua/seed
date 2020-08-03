@@ -1,7 +1,8 @@
 export interface VNode<P = any> {
   type: VNodeType
-  props: P & { children: ComponentChild[] }
+  props: P & DefaultProps
   key: Key
+  _children: null | ComponentChild[]
   ref?: Ref<any> | null
   _isVNode: boolean
   _depth: number
@@ -9,13 +10,14 @@ export interface VNode<P = any> {
   _self: VNode | null
   _parent: VNode | null
   _original: VNode | null
+  _component?: any
 }
 
 type Key = string | number
 type RefObject<T> = { current?: T | null }
 type RefCallback<T> = (instance: T | null) => void
 type Ref<T> = RefObject<T> | RefCallback<T>
-type ComponentChild =
+export type ComponentChild =
   | VNode<any>
   | object
   | string
@@ -25,6 +27,15 @@ type ComponentChild =
   | undefined
 export class Component {
   static defaultProps: PropsType | null = null
+}
+
+export type DefaultProps = Record<string, any> & {
+  children: ComponentChild[]
+  is?: any // webcomponent https://developer.mozilla.org/zh-CN/docs/Web/API/Document/createElement
+  dangerouslySetInnerHTML?: {
+    // html注入
+    __html: string
+  }
 }
 
 interface PropsType {
@@ -51,19 +62,21 @@ export function createVNode(
   type: VNodeType,
   vnodeData: VNodeData = {},
   key?: Key,
-  ref?: Ref<any>
+  ref?: Ref<any>,
+  original?: VNode | null
 ): VNode {
   const vnode: VNode = {
     type,
     props: vnodeData,
     key: key as string,
     ref: ref,
+    _children: null,
     _depth: 0,
     _el: null,
     _self: null,
     _parent: null,
     _isVNode: true,
-    _original: null,
+    _original: original || null,
   }
   vnode._self = vnode
   return vnode
@@ -74,6 +87,7 @@ export function createTextVNode(text?: string | null) {
     type: TEXT_NODE_TYPE,
     props: text,
     key: '',
+    _children: null,
     _depth: 0,
     _el: null,
     _self: null,
