@@ -1,3 +1,5 @@
+import { SeedElement } from './render'
+
 export interface VNode<P = any> {
   type: VNodeType
   props: P & DefaultProps
@@ -11,12 +13,13 @@ export interface VNode<P = any> {
   _parent: VNode | null
   _original: VNode | null
   _component?: any
+  _nextDom?: SeedElement | null
 }
 
 type Key = string | number
 type RefObject<T> = { current?: T | null }
 type RefCallback<T> = (instance: T | null) => void
-type Ref<T> = RefObject<T> | RefCallback<T>
+export type Ref<T> = RefObject<T> | RefCallback<T>
 export type ComponentChild =
   | VNode<any>
   | object
