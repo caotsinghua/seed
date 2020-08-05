@@ -462,7 +462,7 @@ function unmount(vnode: VNode, parentVNode: VNode, skipRemove: boolean) {
   }
 }
 
-function getDomSibling(vnode: VNode, childIndex?: number): any {
+export function getDomSibling(vnode: VNode, childIndex?: number): any {
   if (childIndex == null) {
     if (vnode._parent) {
       return getDomSibling(
