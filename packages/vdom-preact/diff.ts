@@ -1,6 +1,5 @@
 import {
   VNode,
-  Component,
   TEXT_NODE_TYPE,
   DefaultProps,
   ComponentChild,
@@ -10,7 +9,7 @@ import {
   Ref,
 } from './vnode'
 import { SeedElement } from './render'
-import { Seed } from 'packages/seed'
+import { Component } from './component'
 const EMPTY_DOM = Symbol('EMPTY_DOM')
 /**
  *
@@ -35,9 +34,175 @@ export function diff(
 ) {
   const newType = newNode.type
   let dom: SeedElement | null = null
-  if (typeof newType === 'function') {
+  outer: if (typeof newType === 'function') {
     //
     console.log('函数类型组件')
+    let newProps = newNode.props
+    let ctxType = newType.contextType
+    let provider = ctxType && globalContext[ctxType._id]
+    let componentContext = ctxType
+      ? provider
+        ? provider.props.value
+        : ctxType._defaultValue
+      : globalContext
+    let c,
+      clearProcessException,
+      isNew = false
+    if (oldNode._component) {
+      //
+      // 旧node有_component属性
+      c = newNode._component = oldNode._component
+      clearProcessException = c._processingException = c._pendingError
+    } else {
+      // 旧node无组件实例
+      // 实例化组件
+      if ('prototype' in newType && newType.prototype.render) {
+        // 类组件
+        newNode._component = c = new newType(newProps, componentContext)
+      } else {
+        // 函数组件
+        newNode._component = c = new Component(newProps, componentContext)
+        c.constructor = newType
+        c.render = doRender
+      }
+
+      if (provider) {
+        provider.sub(c)
+      }
+      c.props = newProps
+      if (!c.state) c.state = {} // 初始化state
+      c.context = componentContext
+      c._globalContext = globalContext
+      isNew = c._dirty = true
+      c._renderCallbacks = [] // ？？？？
+    }
+    // 触发生命周期
+    if (c._nextState == null) {
+      c._nextState = c.state
+    }
+    if (newType.getDerivedStateFromProps) {
+      if (c._nextState == c.state) {
+        c._nextState = Object.assign({}, c._nextState) // 修改引用
+      }
+      Object.assign(
+        c._nextState,
+        newType.getDerivedStateFromProps(newProps, c._nextState)
+      )
+    }
+
+    let oldProps = c.props
+    let oldState = c.state
+    let snapshot: any
+    if (isNew) {
+      // 创建
+      if (
+        newType.getDerivedStateFromProps == null &&
+        c.componentWillMount != null
+      ) {
+        c.componentWillMount()
+      }
+      if (c.componentDidMount != null) {
+        c._renderCallbacks.push(c.componentDidMount)
+      }
+    } else {
+      // 更新
+      if (
+        newType.getDerivedStateFromProps == null &&
+        newProps !== oldProps &&
+        c.componentWillReceiveProps != null
+      ) {
+        //   只在更新的时候调？
+        c.componentWillReceiveProps(newProps, componentContext)
+      }
+      if (
+        (!c._force &&
+          c.shouldComponentUpdate != null &&
+          c.shouldComponentUpdate(newProps, c._nextState, componentContext) ===
+            false) ||
+        newNode._original === oldNode._original
+      ) {
+        //   不更新
+        c.props = newProps
+        c.state = c._nextState
+        if (newNode._original !== oldNode._original) {
+          c._dirty = false
+        }
+        c._vnode = newNode
+        newNode._el = oldNode._el
+        newNode._children = oldNode._children
+        if (c._renderCallbacks.length) {
+          commitQueue.push(c) // ?
+        }
+        reorderChildren(newNode, oldDom, parentDom) // TODO
+        break outer
+      }
+      //   更新的生命周期
+      if (c.componentWillUpdate != null) {
+        c.componentWillUpdate(newProps, c._nextState, componentContext)
+      }
+      if (c.componentDidUpdate != null) {
+        c._renderCallbacks.push(() => {
+          c.componentDidUpdate(oldProps, newProps, snapshot)
+        })
+      }
+    }
+    // 更新/挂载之前的做完
+    // 实际的挂载
+    c.context = componentContext
+    c.props = newProps
+    c.state = c._nextState
+
+    c._dirty = false
+    c._vnode = newNode
+    c._parentDom = parentDom
+
+    let tmp = c.render(c.props, c.state, c.context)
+    c.state = c._nextState
+    if (c.getChildContext != null) {
+      globalContext = Object.assign(
+        Object.assign({}, globalContext),
+        c.getChildContext()
+      )
+    }
+    if (!isNew && c.getSnapShotBeforeUpdate != null) {
+      // snapshot从该生命周期获得
+      snapshot = c.getSnapShotBeforeUpdate(oldProps, oldState)
+    }
+
+    // 是否是fragment
+    let isTopLevelFragment =
+      tmp != null && tmp.type == Fragment && tmp.key == null
+    let renderResult = isTopLevelFragment ? tmp.props.children : tmp
+    // diff和挂载
+    diffChildren(
+      parentDom,
+      Array.isArray(renderResult) ? renderResult : [renderResult],
+      newNode,
+      oldNode,
+      globalContext,
+      isSvg,
+      excessDomChildren,
+      commitQueue,
+      oldDom
+    )
+
+    // 挂载完成
+    c.base =newNode._el
+    if(c._renderCallbacks.length){
+        commitQueue.push(c)
+    }
+    if(clearProcessException){
+        c._pendingError = c._processingException = null
+    }
+    // 更新完成
+    c._force=false
+    
+  } else if (
+    excessDomChildren == null &&
+    newNode._original === oldNode._original
+  ) {
+    newNode._children = oldNode._children
+    newNode._el = oldNode._el
   } else {
     // dom
     dom = diffElementNodes(
@@ -564,7 +729,7 @@ function diffProps(
     }
   }
 }
-const XLINK_NAMEPSACE='http://www.w3.org/1999/xlink'
+const XLINK_NAMEPSACE = 'http://www.w3.org/1999/xlink'
 function setProperty(
   dom: Node,
   name: string,
@@ -597,7 +762,7 @@ function setProperty(
     }
   }
   // 一些只读属性不设置值
-//   对于dom中已经有的property，通过直接赋值的形式更新
+  //   对于dom中已经有的property，通过直接赋值的形式更新
   else if (
     name !== 'list' &&
     name !== 'tagName' &&
@@ -609,20 +774,33 @@ function setProperty(
     name in dom
   ) {
     dom[name] = value == null ? '' : value
-  }
-  else if(typeof value !== 'function' && name!=='dangerouslySetInnerHTML'){
-      if(name!== (name=name.replace(/^xlink/,''))){
-        //   使用xlink:xxx 的属性名
-        if(value == null || value === false){
-            (dom as SVGElement).removeAttributeNS(XLINK_NAMEPSACE,name.toLowerCase())
-        }else{
-            (dom as SVGElement).setAttributeNS(XLINK_NAMEPSACE,name.toLowerCase(),value)
-        }
-      }else if(value ==null || (value===false && !/^ar/.test(name))){
-        //   有些aira的属性不支持false，true，设置false会报错？
-          (dom as HTMLElement).removeAttribute(name)
-      }else{
-          (dom as HTMLElement).setAttribute(name,value)
+  } else if (
+    typeof value !== 'function' &&
+    name !== 'dangerouslySetInnerHTML'
+  ) {
+    if (name !== (name = name.replace(/^xlink/, ''))) {
+      //   使用xlink:xxx 的属性名
+      if (value == null || value === false) {
+        ;(dom as SVGElement).removeAttributeNS(
+          XLINK_NAMEPSACE,
+          name.toLowerCase()
+        )
+      } else {
+        ;(dom as SVGElement).setAttributeNS(
+          XLINK_NAMEPSACE,
+          name.toLowerCase(),
+          value
+        )
       }
+    } else if (value == null || (value === false && !/^ar/.test(name))) {
+      //   有些aira的属性不支持false，true，设置false会报错？
+      ;(dom as HTMLElement).removeAttribute(name)
+    } else {
+      ;(dom as HTMLElement).setAttribute(name, value)
+    }
   }
+}
+
+function doRender(props: any, state?: any, context?: any) {
+  return this.constructor(props, context)
 }

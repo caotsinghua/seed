@@ -4,7 +4,7 @@ import { DefaultProps, Fragment, VNode } from './vnode'
 import { SeedElement } from './render'
 import { diff, getDomSibling } from './diff'
 
-class Component<P = any> {
+export class Component<P = any> {
   props: P & DefaultProps
   context: object
   state: any
@@ -13,6 +13,7 @@ class Component<P = any> {
   _vnode?: VNode
   _el?: SeedElement
   _parentDom?: SeedElement
+  _dirty?: boolean // ?更新
   constructor(props: P & DefaultProps, context?: object) {
     this.props = props
     this.context = context || {}
@@ -105,13 +106,35 @@ function updateParentDomPointers(vnode: VNode): any {
     return updateParentDomPointers(parent)
   }
 }
-const defer = Promise.resolve()
+const defer = Promise.prototype.then.bind(Promise.resolve())
+let reRenderQueue: any[] = []
+
+let prevDebounce:any
+
 function enqueueRender(c: Component) {
-    if(c._dirty) return
-    c._dirty = true
-    reRenderQueue.push(c)
-    if(!process._rerenderCount){
-        process._rerenderCount++
-        defer.then(process)
-    }
+  if (
+    !c._dirty &&
+    (c._dirty = true) &&
+    reRenderQueue.push(c) &&
+    !process._rerenderCount++
+  ) {
+    ;(prevDebounce || defer)(process)
+  }
 }
+
+function process() {
+  let queue
+  //   防止不必要的更新
+  //   处理中的长度 和 渲染长度
+  while ((process._rerenderCount = reRenderQueue.length)) {
+    queue = reRenderQueue.sort((a, b) => a._vnode._depth - b._vnode._depth) // 从上往下更新
+    reRenderQueue = [] // 清空
+    queue.some((c) => {
+      if (c._dirty) {
+        // 更新
+        renderComponent(c)
+      }
+    })
+  }
+}
+process._rerenderCount = 0

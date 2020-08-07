@@ -1,4 +1,5 @@
 import { SeedElement } from './render'
+import { Component } from './component'
 
 export interface VNode<P = any> {
   type: VNodeType
@@ -28,9 +29,6 @@ export type ComponentChild =
   | boolean
   | null
   | undefined
-export class Component {
-  static defaultProps: PropsType | null = null
-}
 
 export type DefaultProps = Record<string, any> & {
   children: ComponentChild[]
