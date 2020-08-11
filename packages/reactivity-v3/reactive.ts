@@ -1,5 +1,3 @@
-import { Ref } from 'packages/vdom-preact/vnode'
-import { type } from 'os'
 
 type Ref = any
 type UnwrapRef<T> = any
@@ -32,6 +30,8 @@ export function reactive(target: object) {
   return createReactiveObject(target, false, {}, {})
 }
 
+const collectionTypes = new Set<Function>([Set, Map, WeakMap, WeakSet])
+
 function createReactiveObject(
   target: Target,
   isReadonly: boolean,
@@ -52,9 +52,62 @@ function createReactiveObject(
   ) {
     return target
   }
-
+  // 检查是否target已经被proxy
   const reactiveFlag = isReadonly
     ? ReactiveFlags.READONLY
     : ReactiveFlags.REACTIVE
+  // 如果readonly或者reactive有值，则直接返回这个值
+  if (hasOwn(target, reactiveFlag)) {
+    return target[reactiveFlag]
+  }
+  // 该target不能被监听
+  if (!canObserve(target)) {
+    return target
+  }
+  // 如果监听的对象是map/set/weakmap/weakset，就是用collectionHandlers，否则用base
+  const observed = new Proxy(
+    target,
+    collectionTypes.has(target.constructor) ? collectionHandlers : baseHandlers
+  )
+  def(target, reactiveFlag, observed)
+  // 返回一个代理对象
+  return observed
+}
 
+export function hasOwn(obj: object, key: string | symbol): key is keyof typeof obj {
+  return Object.prototype.hasOwnProperty.call(obj, key)
+}
+
+/**
+ * value.skip不为true，value的类型是复合要求的，并且是可以拓展属性的
+ * @param value
+ */
+function canObserve(value: Target): boolean {
+  return (
+    !value[ReactiveFlags.SKIP] &&
+    isObservableType(toRawType(value)) &&
+    Object.isExtensible(value)
+  )
+}
+
+function makeMap(str: string): (key: string) => boolean {
+  const map: Record<string, boolean> = Object.create(null)
+  let arr = str.split(',')
+  for (let i = 0; i < arr.length; i++) {
+    map[arr[i]] = true
+  }
+  return (key: string) => !!map[key]
+}
+
+const isObservableType = makeMap('Object,Array,Map,Set,WeakMap,WeakSet')
+function toRawType(value: object) {
+  return Object.prototype.toString.call(value).slice(8, -1)
+}
+
+function def(obj: object, key: string | symbol, value: any) {
+  Object.defineProperty(obj, key, {
+    value,
+    enumerable: false, // 不可枚举
+    configurable: true,
+  })
 }
