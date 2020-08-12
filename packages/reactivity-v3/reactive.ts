@@ -1,5 +1,6 @@
+import { mutableHandlers, readonlyHandlers } from './baseHandlers'
+import { Ref } from './ref'
 
-type Ref = any
 type UnwrapRef<T> = any
 // ===doing
 interface Target {
@@ -27,7 +28,7 @@ export function reactive(target: object) {
     return target
   }
   // 创建proxy
-  return createReactiveObject(target, false, {}, {})
+  return createReactiveObject(target, false, mutableHandlers, {})
 }
 
 const collectionTypes = new Set<Function>([Set, Map, WeakMap, WeakSet])
@@ -39,7 +40,7 @@ function createReactiveObject(
   collectionHandlers: ProxyHandler<any>
 ) {
   // 校验参数合法
-  if (Object.prototype.toString.call(target) !== '[object Object]') {
+  if (typeof target !== 'object') {
     console.warn('[createReactiveObject]target 必须是对象')
     return target
   }
@@ -74,7 +75,17 @@ function createReactiveObject(
   return observed
 }
 
-export function hasOwn(obj: object, key: string | symbol): key is keyof typeof obj {
+// 创建一个只读的proxy
+export function readonly<T extends object>(target: T) {
+  return createReactiveObject(target, true, readonlyHandlers, {})
+}
+
+//  ==== === utils === ====
+
+export function hasOwn(
+  obj: object,
+  key: string | symbol
+): key is keyof typeof obj {
   return Object.prototype.hasOwnProperty.call(obj, key)
 }
 
@@ -110,4 +121,10 @@ function def(obj: object, key: string | symbol, value: any) {
     enumerable: false, // 不可枚举
     configurable: true,
   })
+}
+// 如果ob.raw.raw.raw ... 一致嵌套，则递归到最深处
+export function toRaw<T>(observed: T): T {
+  return (
+    (observed && toRaw((observed as Target)[ReactiveFlags.RAW])) || observed
+  )
 }
