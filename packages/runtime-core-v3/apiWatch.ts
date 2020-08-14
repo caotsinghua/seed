@@ -1,7 +1,13 @@
-import { fchown } from 'fs'
-import { ReactiveEffectOptions, effect } from 'packages/reactivity-v3/effects'
-import { type } from 'os'
-import { traverse } from '@babel/core'
+import {
+  ReactiveEffectOptions,
+  effect,
+  stop,
+} from 'packages/reactivity-v3/effects'
+import { Ref, isRef } from 'packages/reactivity-v3/ref'
+import { ComputedRef } from 'packages/reactivity-v3/computed'
+import { hasChanged } from 'packages/reactivity-v3/baseHandlers'
+import { isReactive } from 'packages/reactivity-v3/reactive'
+import { callWithErrorHandling, ErrorCodes } from './errorHandling'
 
 export type WatchEffect = (inInvalidate: InvalidateCbRegistrator) => void
 export type WatchSource<T = any> = Ref<T> | ComputedRef<T> | (() => T) // 监听的源
@@ -12,9 +18,9 @@ export interface WatchOptionsBase {
   onTrack?: ReactiveEffectOptions['onTrack']
   onTrigger?: ReactiveEffectOptions['onTrigger']
 }
-export interface WatchOptions <Immediate = boolean> extends WatchOptionsBase{
-    immediate?:Immediate,
-    deep?:boolean
+export interface WatchOptions<Immediate = boolean> extends WatchOptionsBase {
+  immediate?: Immediate
+  deep?: boolean
 }
 
 export type WatchStopHandle = () => void
@@ -32,172 +38,182 @@ export type WatchCallback<V = any, OV = any> = (
   onInvalidate: InvalidateCbRegistrator
 ) => any
 
-const INITIAL_WATCHER_VALUE={}
-function doWatch(source: WatchEffect|WatchSource|WatchSource[], cb: WatchCallback,{
-    immediate,deep,flush,onTrigger,onTrack
-}:WatchOptions={} instance = currentInstance,) {
-    if(!cb){
-        // 没有回调
-        if(immediate !== undefined){
-            console.warn("不设置回调无法触发watch的callback")
-        }
-        if(deep !== undefined){
-            console.error("不设置回调无法使deep生效")
-        }
-
+const INITIAL_WATCHER_VALUE = {}
+function doWatch(
+  source: WatchEffect | WatchSource | WatchSource[],
+  cb: WatchCallback | null,
+  { immediate, deep, flush, onTrigger, onTrack }: WatchOptions = {},
+  instance = currentInstance
+) {
+  if (!cb) {
+    // 没有回调
+    if (immediate !== undefined) {
+      console.warn('不设置回调无法触发watch的callback')
     }
-
-    let getter :()=>any
-    const isRefSource = isRef(source) // 监听的源是ref类型
-    if(isRefSource){
-        getter = ()=>(source as Ref).value
-    }else if(isReactive(source)){
-        // 监听了一个相应对象
-        getter=()=>source
-        deep = true
-    }else if(Array.isArray(source)){
-        // 监听了一个ref数组
-        getter = ()=>{
-            source.map(s=>{
-                if(isRef(s)){
-                    return s.value // 获取值
-                }else if(isReactive(s)){
-                    return traverse(s) // 深度取值
-                }else if(typeof source === 'function'){
-                    return source()
-                }else{
-                    console.error("非法 source")
-                }
-            })
-        }
-    }else if(typeof source === 'function'){
-        if(cb){
-            getter = ()=>source()
-        }else{
-            // 没有回调方法
-            getter=()=>{
-                if(instance && instance.isUnmounted){
-                    // 实例未挂载
-                    return
-                }
-                if(cleanup){
-                    // 每次执行source之前执行clean，
-                    cleanup()
-                }
-                return source(onInvalidate) // 执行完毕后执行onInvalidate
-            }
-        }
-    }else{
-        getter = ()=>{}
+    if (deep !== undefined) {
+      console.error('不设置回调无法使deep生效')
     }
+  }
 
-    if(cb && deep){
-        // 深度
-        const baseGetter = getter
-        getter = ()=>traverse(baseGetter())
-    }
-
-    let cleanup:()=>void
-    const onInvalidate:InvalidateCbRegistrator=(fn:()=>void)=>{
-        cleanup = runner.options.onStop = ()=>{
-            fn()
+  let getter: () => any
+  const isRefSource = isRef(source) // 监听的源是ref类型
+  if (isRefSource) {
+    getter = () => (source as Ref).value
+  } else if (isReactive(source)) {
+    // 监听了一个响应对象
+    getter = () => source
+    deep = true
+  } else if (Array.isArray(source)) {
+    // 监听了一个ref数组
+    getter = () => {
+      source.map((s) => {
+        if (isRef(s)) {
+          return s.value // 获取值
+        } else if (isReactive(s)) {
+          return traverse(s) // 深度取值
+        } else if (typeof s === 'function') {
+          return callWithErrorHandling(s, instance, ErrorCodes.WATCH_GETTER)
+        } else {
+          console.error('非法 source')
         }
+      })
     }
-    let oldValue = Array.isArray(source) ? [] :INITIAL_WATCHER_VALUE
-    const job = ()=>{
-        if(!runner.active){
-            return
+  } else if (typeof source === 'function') {
+    if (cb) {
+      getter = () =>
+        callWithErrorHandling(source, instance, ErrorCodes.WATCH_GETTER)
+    } else {
+      // 没有回调方法
+      getter = () => {
+        if (instance && instance.isUnmounted) {
+          // 实例未挂载
+          return
         }
-        if(cb){
-            const newValue = runner() // get new value
-            if(deep || isRefSource || hasChanged(newValue,oldValue)){
-                // run before cb 
-                if(cleanup){
-                    cleanup()
-                }
-                cb(newValue,oldValue,onInvalidate)
-            }
-        }else{
-            runner()
+        if (cleanup) {
+          // 每次执行source之前执行clean，
+          cleanup()
         }
+        return callWithErrorHandling(
+          source,
+          instance,
+          ErrorCodes.WATCH_CALLBACK,
+          [onInvalidate]
+        ) // 执行完毕后执行onInvalidate
+      }
     }
-    job.cb=!!cb
+  } else {
+    getter = () => {}
+  }
 
-    let scheduler:(job:()=>any)=>void
+  if (cb && deep) {
+    // 深度
+    const baseGetter = getter
+    getter = () => traverse(baseGetter())
+  }
 
-    if(flush === 'sync'){
-        // 同步执行更新
-        scheduler = job
-    }else if(flush === 'pre'){
-        // 在视图更新前执行
-        job.id = -1 // 优先级提到最高
-        scheduler = ()=>{
-            if(!instance || instance.isMounted){
-                // 必须组件挂载后，才会加入队列
-                queuePreFlushCb(job)
-            }else{
-                // 组件未挂载。同步执行
-                job()
-            }
-        }
-    }else{
-        // 视图更新后执行
-        scheduler=()=>queuePostRenderEffect(job,instance && instance.suspense)
+  let cleanup: () => void
+  const onInvalidate: InvalidateCbRegistrator = (fn: () => void) => {
+    cleanup = runner.options.onStop = () => {
+      callWithErrorHandling(fn, instance, ErrorCodes.WATCH_CLEANUP)
     }
-    // 创建一个懒求值effect
-    const runner = effect(getter,{
-        lazy:true,
-        onTrack,
-        onTrigger,
-        scheduler
-    })
-
-    if(cb){
-        if(immediate){
-            // 立即执行
-            job()  // 这里会执行cb
-        }else{
-            oldValue = runner() // 依赖收集
-        }
-    }else{
-        runner() // 直接依赖收集
+  }
+  let oldValue = Array.isArray(source) ? [] : INITIAL_WATCHER_VALUE
+  const job = () => {
+    if (!runner.active) {
+      return
     }
-
-    return ()=>{
-        // 停止侦听
-        stop(runner)
-        if(instance){
-            remove(instance.effects,runner) // 从组件实例删除这个effect
+    if (cb) {
+      const newValue = runner() // get new value
+      if (deep || isRefSource || hasChanged(newValue, oldValue)) {
+        // run before cb
+        if (cleanup) {
+          cleanup()
         }
+        callWithErrorHandling(cb, instance, ErrorCodes.WATCH_CALLBACK, [
+          newValue,
+          oldValue === INITIAL_WATCHER_VALUE ? undefined : oldValue,
+          onInvalidate,
+        ])
+        oldValue = newValue
+      }
+    } else {
+      runner()
     }
+  }
+  job.cb = !!cb
 
+  let scheduler: (job: () => any) => void
 
+  if (flush === 'sync') {
+    // 同步执行更新
+    scheduler = job
+  } else if (flush === 'pre') {
+    // 在视图更新前执行
+    job.id = -1 // 优先级提到最高
+    scheduler = () => {
+      if (!instance || instance.isMounted) {
+        // 必须组件挂载后，才会加入队列
+        queueJob(job)
+      } else {
+        // 组件未挂载。同步执行
+        job()
+      }
+    }
+  } else {
+    // 视图更新后执行
+    scheduler = () => queuePostRenderEffect(job, instance && instance.suspense)
+  }
+  // 创建一个懒求值effect
+  const runner = effect(getter, {
+    lazy: true,
+    onTrack,
+    onTrigger,
+    scheduler,
+  })
 
+  if (cb) {
+    if (immediate) {
+      // 立即执行
+      job() // 这里会执行cb
+    } else {
+      oldValue = runner() // 依赖收集
+    }
+  } else {
+    runner() // 直接依赖收集
+  }
+
+  return () => {
+    // 停止侦听
+    stop(runner)
+    if (instance) {
+      remove(instance.effects, runner) // 从组件实例删除这个effect
+    }
+  }
 }
 
 // 递归取值，进行依赖收集
-function traverse(value:unknown,seen:Set<unknown> = new Set()){
-    if(typeof value !== 'object' || seen.has(value)){
-        // 这个值已经获取过或者递归的值不是对象
-        return value
-    }
-    seen.add(value)
-    if(Array.isArray(value)){
-        for(let i=0;i<value.length;i++){
-            traverse(value[i],seen)
-        }
-    }else if(value instanceof Map){
-        value.forEach((v,key)=>{
-            traverse(value.get(key),seen)
-        })
-    }else if(value instanceof Set){
-        value.forEach(v=>{
-            traverse(v,seen)
-        })
-    }else{
-        for(const key in value){
-            traverse((value as any)[key],seen)
-        }
-    }
+function traverse(value: unknown, seen: Set<unknown> = new Set()) {
+  if (typeof value !== 'object' || seen.has(value)) {
+    // 这个值已经获取过或者递归的值不是对象
     return value
+  }
+  seen.add(value)
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      traverse(value[i], seen)
+    }
+  } else if (value instanceof Map) {
+    value.forEach((v, key) => {
+      traverse(value.get(key), seen)
+    })
+  } else if (value instanceof Set) {
+    value.forEach((v) => {
+      traverse(v, seen)
+    })
+  } else {
+    for (const key in value) {
+      traverse((value as any)[key], seen)
+    }
+  }
+  return value
 }

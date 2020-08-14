@@ -128,3 +128,14 @@ export function toRaw<T>(observed: T): T {
     (observed && toRaw((observed as Target)[ReactiveFlags.RAW])) || observed
   )
 }
+
+export function isReactive(value: unknown): boolean {
+  if (isReadonly(value)) {
+    return isReactive((value as Target)[ReactiveFlags.RAW])
+  }
+  return !!(value && (value as Target)[ReactiveFlags.IS_REACTIVE])
+}
+
+export function isReadonly(value: unknown): boolean {
+  return !!(value && (value as Target)[ReactiveFlags.IS_READONLY])
+}

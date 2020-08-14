@@ -251,7 +251,7 @@ function isEffect(fn: any): fn is ReactiveEffect {
 }
 
 // 停止触发更新
-function stop(effect: ReactiveEffect) {
+export function stop(effect: ReactiveEffect) {
   if (effect.active) {
     cleanup(effect)
     if (effect.options.onStop) {
