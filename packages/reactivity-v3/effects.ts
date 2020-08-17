@@ -232,7 +232,11 @@ function cleanup(effect: ReactiveEffect) {
   }
   deps.length = 0
 }
-
+// 暂停收集
+export function pauseTracking(){
+  trackStack.push(shouldTrack)
+  shouldTrack=false
+}
 // 允许收集当前effect的依赖
 function enableTraking() {
   trackStack.push(shouldTrack)
@@ -240,7 +244,7 @@ function enableTraking() {
 }
 
 // 重置收集依赖的锁
-function resetTraking() {
+export function resetTraking() {
   let last = trackStack.pop()
   shouldTrack = last === undefined ? true : last
 }

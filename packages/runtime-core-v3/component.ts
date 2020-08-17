@@ -1,6 +1,12 @@
 import { AppContext, createAppContext } from './apiCreateApp'
-import { VNode } from './vnode'
-import { ReactiveEffect } from 'packages/reactivity-v3/effects'
+import { VNode, ShapeFlags } from './vnode'
+import {
+  ReactiveEffect,
+  pauseTracking,
+  resetTraking,
+} from 'packages/reactivity-v3/effects'
+import { PublicInstanceProxyHandlers } from './componentProxy'
+import { callWithErrorHandling, ErrorCodes } from './errorHandling'
 export const enum LifecycleHooks {
   BEFORE_CREATE = 'bc',
   CREATED = 'c',
@@ -20,8 +26,8 @@ export const enum LifecycleHooks {
 export interface ComponentInternalOptions {}
 // 类组件
 export interface ClassComponent {
-  new(...args:any[]):ComponentPublicInstance<any,any,any,any,any>,
-  __vccOpts:ComponentOptions
+  new (...args: any[]): ComponentPublicInstance<any, any, any, any, any>
+  __vccOpts: ComponentOptions
 }
 // 组件配置对象
 export interface ComponentOptions {}
@@ -164,9 +170,94 @@ export function createComponentInstance(
   }
 
   // 设置上下文
-  instance.ctx = { _: instance }
+  instance.ctx = { _: instance } // 自己
 
   instance.root = parent ? parent.root : instance
   instance.emit = emit.bind(null, instance) // 触发器
   return instance
+}
+
+export let isInSSRComponentSetup = false
+
+export function setupComponent(
+  instance: ComponentInternalInstance,
+  isSSR = false
+) {
+  isInSSRComponentSetup = isSSR
+  const { props, children, shapeFlag } = instance.vnode
+  const isStateful = shapeFlag & ShapeFlags.STATEFUL_COMPONENT
+
+  initProps(instance,props,isStateful,isSSR)
+  initSlots(instance,children)
+
+  const setupResult = isStateful
+    ? setupStatefulComponent(instance, isSSR)
+    : undefined
+  isInSSRComponentSetup = false
+  return setupResult
+}
+export let currentInstance: ComponentInternalInstance | null = null
+function setupStatefulComponent(
+  instance: ComponentInternalInstance,
+  isSSR: boolean
+) {
+  const Component = instance.type as ComponentOptions // 组件配置
+
+  // 创建 render proxy property access cache
+  instance.accessCache = {}
+  // create public instance/render proxy
+  // also mark it raw so its never observed
+  instance.proxy = new Proxy(instance.ctx, PublicInstanceProxyHandlers)
+  // 调用setup
+  const { setup } = Component
+
+  if (setup) {
+    const setupContext = (instance.setupContext =
+      setup.length > 1 ? createSetupContext(instance) : null)
+    currentInstance = instance
+    pauseTracking()
+    const setupResult = callWithErrorHandling(
+      setup,
+      instance,
+      ErrorCodes.SETUP_FUNCTION,
+      [instance.props, setupContext]
+    )
+    resetTraking()
+    currentInstance = null
+    if (isPromise(setupResult)) {
+      // 异步的setup
+      console.warn(
+        `setup() returned a Promise, but the version of Vue you are using ` +
+          `does not support it yet.`
+      )
+      instance.asyncDep = setupResult
+    } else {
+      handleSetupResult(instance, setupResult, isSSR)
+    }
+  } else {
+    // finishComponentSetup
+    // 2.0配置
+    finishComponentSetup(instance, isSSR)
+  }
+}
+
+export function handleSetupResult(
+  instance: ComponentInternalInstance,
+  setupResult: unknown,
+  isSSR: boolean
+) {
+  if(typeof setupResult === 'function'){
+    instance.render = setupResult // setup返回render函数
+  }else if(Object.prototype.toString.call(setupResult)==='[object Object]'){
+    instance.setupState = proxyRefs(setupResult)
+  }
+  finishComponentSetup(instance,isSSR) // 2.0的配置
+}
+
+function createSetupContext(instance: ComponentInternalInstance): SetupContext {
+  return {
+    attrs: instance.attrs,
+    slots: instance.slots,
+    emit: instance.emit,
+  }
 }
