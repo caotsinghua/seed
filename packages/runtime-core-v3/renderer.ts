@@ -15,6 +15,7 @@ import {
   setupComponent,
 } from './component'
 import { effect } from 'packages/reactivity-v3/effects'
+import { ENGINE_METHOD_PKEY_ASN1_METHS } from 'constants'
 
 export interface RootRenderFunction {}
 export interface RendererOptions<HostNode = any, HostElement = any> {
@@ -55,8 +56,8 @@ function baseCreateRenderer(
   createHydrationFns?: any
 ): any {
   const {
-    insert,
-    remove,
+    insert: hostInsert,
+    remove: hostRemove,
     patchProp,
     forcePatchProps,
     createComment,
@@ -65,8 +66,8 @@ function baseCreateRenderer(
     setText,
     setElementText,
     parentNode,
-    nextSibling,
-    setScopeId,
+    nextSibling: hostNextSibling,
+    setScopeId: hostSetScopeId = () => {},
     cloneNode,
     insertStaticContent,
   } = options
@@ -107,6 +108,8 @@ function baseCreateRenderer(
       case Static:
         if (n1 == null) {
           mountStaticNode(n2, container, anchor, isSvg)
+        } else {
+          patchStaticNode(n1, n2, container, isSvg)
         }
         break
       case Fragment:
@@ -252,9 +255,38 @@ function baseCreateRenderer(
       return
     }
     // 依赖收集
-    setupRenderEffect()
+    setupRenderEffect(
+      instance,
+      initialVNode,
+      container,
+      anchor,
+      parentSuspense,
+      isSvg,
+      optimized
+    )
   }
 
+  const updateComponent = (n1: VNode, n2: VNode, optimized: boolean) => {
+    const instance = (n2.component = n1.component)!
+    if (shouldUpdateComponent(n1, n2, optimized)) {
+      // suspense的一些代码
+      if (instance?.asyncDep && !instance.asyncResolved) {
+        updateComponentPreRender(instance, n2, optimized)
+        return
+      } else {
+        // 正常走到这里
+        instance.next = n2
+        // 避免重复更新
+        invalidateJob(instance.update)
+        instance.update()
+      }
+    } else {
+      // 不用更新
+      n2.component = n1.component
+      n2.el = n1.el
+      instance.vnode = n2
+    }
+  }
   const setupRenderEffect: setupRenderEffectFn = (
     instance,
     initialVNode,
@@ -342,29 +374,386 @@ function baseCreateRenderer(
         )
 
         next.el = nextTree.el
-        if(originNext === null){
-            // 更新父组件的el
-            updateHOCHostEl(instance,nextTree.el)
+        if (originNext === null) {
+          // 更新父组件的el
+          updateHOCHostEl(instance, nextTree.el)
         }
         // 触发一些声明周期
       }
-    },prodEffectOptions)
+    }, prodEffectOptions)
   }
 
   const updateComponentPreRender = (
-      instance:ComponentInternalInstance,
-      nextVNode:VNode,
-      optimized:boolean
-  )=>{
+    instance: ComponentInternalInstance,
+    nextVNode: VNode,
+    optimized: boolean
+  ) => {
     // 更新成为新的组件
     nextVNode.component = instance
     const prevProps = instance.vnode.props
     instance.vnode = nextVNode
-    instance.next= null
-    updateProps(instance,nextVNode.props,prevProps,optimized)
-    updateSlots(instance,nextVNode.children)
+    instance.next = null
+    updateProps(instance, nextVNode.props, prevProps, optimized)
+    updateSlots(instance, nextVNode.children)
     // 更新
     instance.update()
+  }
+
+  const getNextHostNode = (vnode: VNode) => {
+    if (vnode.shapeFlag & ShapeFlags.COMPONENT) {
+      return getNextHostNode(vnode.component!.subTree)
+    }
+    if (vnode.shapeFlag & ShapeFlags.SUSPENSE) {
+      return vnode.suspense!.next()
+    }
+    // getNextSinling
+    return hostNextSibling(vnode.anchor || vnode.el)
+  }
+
+  // 处理文字
+
+  const processText = (
+    n1: VNode,
+    n2: VNode,
+    container: any | null,
+    anchor: any | null
+  ) => {
+    if (n1 == null) {
+      // 挂载
+      hostInsert(
+        (n2.el = hostCreateText(n2.children as string)),
+        container,
+        anchor
+      )
+    } else {
+      // 更新
+      const el = (n2.el = n1.el)
+      // 更新文本
+      if (n2.children !== n1.children) {
+        hostSetText(el, n2.children as string)
+      }
+    }
+  }
+  // 创建注释
+  const processCommentNode = (
+    n1: VNode,
+    n2: VNode,
+    container: any | null,
+    anchor: any | null
+  ) => {
+    // 挂载
+    if (n1 == null) {
+      // 创建comment，并插入到container
+      hostInsert(
+        (n2.el = hostCreateComment((n2.children as string) || '')),
+        container,
+        anchor
+      )
+    } else {
+      // 没有动态的注释
+      n2.el = n1.el
+    }
+  }
+
+  // static
+  const mountStaticNode = (
+    n2: VNode,
+    container: any,
+    anchor: any | null,
+    isSVG: boolean
+  ) => {
+    ;[n2.el, n2.anchor] = hostInsertStaticContent!(
+      n2.children as string,
+      container,
+      anchor,
+      isSVG
+    )
+  }
+  // dev / hmr only
+  const patchStaticNode = (
+    n1: VNode,
+    n2: VNode,
+    container: any | null,
+    isSVG: boolean
+  ) => {
+    if (n2.children !== n1.children) {
+      const anchor = hostNextSibling(n1.anchor!)
+      // 移除旧的元素
+      removeStaticNode(n1)
+      ;[(n2.el, n2.anchor)] = hostInsertStaticContent!(
+        n2.children as string,
+        container,
+        anchor,
+        isSVG
+      )
+    } else {
+      // 相同
+      n2.el = n1.el
+      n2.anchor = n1.anchor
+    }
+  }
+
+  // fragment
+  const processFragment = (
+    n1: VNode | null,
+    n2: VNode,
+    container: any,
+    anchor: any | null,
+    parentComponent: ComponentInternalInstance | null,
+    parentSuspense: SuspenseBoundary | null,
+    isSVG: boolean,
+    optimized: boolean
+  ) => {
+    // 范围开始节点
+    const fragmentStartAnchor = (n2.el = n1 ? n1.el : hostCreateText(''))
+    const fragmentEndAnchor = (n2.anchor = n1 ? n1.anchor : hostCreateText(''))
+    let { patchFlag, dynamicChildren } = n2
+    if (patchFlag > 0) {
+      optimized = true
+    }
+    // 挂载 / 更新
+    if (n1 == null) {
+      // 挂载
+      hostInsert(fragmentStartAnchor, container, anchor)
+      hostInsert(fragmentEndAnchor, container, anchor)
+      // 先插入开始和结束的节点
+      // 把子节点插入到start和end中间
+      mountChildren(
+        n2.children,
+        container,
+        fragmentEndAnchor,
+        parentComponent,
+        parentSuspense,
+        isSVG,
+        optimized
+      )
+    } else {
+      if (
+        patchFlag > 0 &&
+        patchFlag & PatchFlags.STABLE_FRAGMENT &&
+        dynamicChildren
+      ) {
+        patchBlockChildren(
+          n1.dynamicProps,
+          dynamicChildren,
+          container,
+          parentComponent,
+          parentSuspense,
+          isSVG
+        )
+      } else {
+        // 更新children
+        patchChildren(
+          n1,
+          n2,
+          container,
+          fragmentEndAnchor,
+          parentComponent,
+          parentSuspense,
+          isSVG,
+          optimized
+        )
+      }
+    }
+  }
+
+  // 更新element
+  const processElement = (
+    n1: VNode | null,
+    n2: VNode,
+    container: any | null,
+    anchor: any | null,
+    parentComponent: ComponentInternalInstance | null,
+    parentSuspense: SuspenseBoundary | null,
+    isSVG: boolean,
+    optimized: boolean
+  ) => {
+    isSVG = isSVG || (n2.type as string) === 'svg'
+    if (n1 == null) {
+      // 挂载
+      mountElement(
+        n2,
+        container,
+        anchor,
+        parentComponent,
+        parentSuspense,
+        isSVG,
+        optimized
+      )
+    } else {
+      patchElement(n1, n2, parentComponent, parentSuspense, isSVG, optimized)
+    }
+  }
+
+  const mountElement = (
+    vnode: VNode,
+    container: any,
+    anchor: any | null,
+    parentComponent: ComponentInternalInstance | null,
+    parentSuspense: SuspenseBoundary | null,
+    isSVG: boolean,
+    optimized: boolean
+  ) => {
+    let el
+    let vnodeHook: VNodeHook | undefined | null
+    const {
+      type,
+      props,
+      shapeFlag,
+      transition,
+      scopeId,
+      patchFlag,
+      dirs,
+    } = vnode
+
+    if (
+      !__DEV__ &&
+      vnode.el &&
+      hostCloneNode !== undefined &&
+      patchFlag === PatchFlags.HOISTED
+    ) {
+      // el 被宠用
+      el = vnode.el = hostCloneNode(vnode.el)
+    } else {
+      el = vnode.el = hostCreateElement(
+        vnode.type as string,
+        isSVG,
+        props && props.is
+      )
+      // 先渲染children
+      if (shapeFlag & ShapeFlags.TEXT_CHILDREN) {
+        hostSetElementText(el, vnode.children as string)
+      } else if (shapeFlag & ShapeFlags.ARRAY_CHILDREN) {
+        mountChildren(
+          vnode.children,
+          el,
+          null,
+          parentComponent,
+          parentSuspense,
+          isSVG && type !== 'foreignObject',
+          optimized || !!vnode.dynamicChildren
+        )
+      }
+      if (props) {
+        for (const key in props) {
+          if (!isReversedProp(key)) {
+            hostPatchProp(
+              el,
+              key,
+              null,
+              props[key],
+              isSVG,
+              vnode.children,
+              parentComponent,
+              parentSuspense,
+              unmountChildren
+            )
+          }
+        }
+      }
+
+      // 触发beforeMounthook
+      if (dirs) {
+        invokeDirectiveHook()
+      }
+
+      if (scopeId) {
+        hostSetScopeId(el, scopeId)
+      }
+
+      const treeOwnerId = parentComponent && parentComponent.type.__scopeId
+      if (treeOwnerId && treeOwnerId !== scopeId) {
+        hostSetScopeId(el, treeOwnerId + '-s')
+      }
+      if (transition && !transition.persisted) {
+        transition.beforeEnter(el)
+      }
+    }
+    // 插入dom
+    hostInsert(el, container, anchor)
+
+    const needCallTransitionHooks =
+      !parentSuspense ||
+      (parentSuspense &&
+        parentSuspense.isResolved &&
+        transition &&
+        !transition.persisted)
+    if (
+      (vnodeHook = props && props.onVnodeMounted) ||
+      needCallTransitionHooks ||
+      dirs
+    ) {
+      queuePostRenderEffect(() => {
+        vnodeHook && invokeVNodeHook(vnodeHook, parentComponent, vnode)
+        needCallTransitionHooks && transition.enter(el)
+        dirs && invokeDirectiveHook(vnode, null, parentComponent, 'mounted')
+      }, parentSuspense)
+    }
+  }
+
+  const patchElement = (
+    n1: VNode,
+    n2: VNode,
+    parentComponent: ComponentInternalInstance | null,
+    parentSuspense: SuspenseBoundary | null,
+    isSVG: boolean,
+    optimized: boolean
+  ) => {
+    const el = (n2.el = n1.el)
+    let { patchFlag, dynamicChildren, dirs } = n2
+    patchFlag |= n1.patchFlag & PatchFlags.FULL_PROPS
+
+    const oldProps = n1.props || EMPTY_OBJ
+    const newProps = n2.props || EMPTY_OBJ
+
+    if (patchFlag > 0) {
+      if (patchFlag & PatchFlags.FULL_PROPS) {
+        patchProps(
+          el,
+          n2,
+          oldProps,
+          newProps,
+          parentComponent,
+          parentSuspense,
+          isSVG
+        )
+      } else {
+        // class
+        if (patchFlag & PatchFlags.CLASS) {
+          if (oldProps.class !== newProps.class) {
+            hostPatchProp(el, 'class', null, newProps.class, isSVG)
+          }
+        }
+        // style
+        if (patchFlag & PatchFlags.STYLE) {
+          hostPatchProp(el, 'style', oldProps.style, newProps.style, isSVG)
+        }
+        if (patchFlag & PatchFlags.PROPS) {
+          const propsToUpdate = n2.dynamicProps
+          for (let i = 0; i < propsToUpdate?.length; i++) {
+            const key = propsToUpdate[i]
+            const prev = oldProps[key]
+            const next = newProps[key]
+            if (
+              next !== prev ||
+              (hostForcePatchProp && hostForcePatchProp(el, key))
+            ) {
+              hostPatchProp(
+                el,
+                key,
+                prev,
+                next,
+                isSVG,
+                n1.children,
+                parentComponent,
+                parentSuspense,
+                unmountChildren
+              )
+            }
+          }
+        }
+      }
+    }
   }
 }
 
