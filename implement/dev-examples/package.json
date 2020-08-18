@@ -1,0 +1,12 @@
+{
+  "name": "dev-examples",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "devDependencies": {
+    "parcel": "^1.12.4"
+  },
+  "scripts": {
+    "start": "parcel *.html"
+  }
+}
