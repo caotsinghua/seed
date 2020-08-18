@@ -30,8 +30,11 @@ export function createApp(
     _context: context,
     mount(container) {
       if (!isMounted) {
-        const vnode = createVNode(rootComponent,rootProps)
-        render(vnode,container)
+        const vnode = rootComponent.__isVNode
+          ? rootComponent
+          : createVNode(rootComponent, rootProps)
+        vnode.appContext = context
+        render(vnode, container)
         isMounted = true
         app._container = container
       }
@@ -40,7 +43,7 @@ export function createApp(
       //   卸载
       if (isMounted) {
         console.log('卸载app')
-        render(null,app._container)
+        render(null, app._container)
         app._container = null
         isMounted = false
       }

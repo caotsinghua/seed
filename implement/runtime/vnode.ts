@@ -1,5 +1,7 @@
 import { Component, ComponentInstance } from './component'
 import { RendererElement } from './render'
+import { isObject } from 'util'
+import { AppContext } from '../seed/createApp'
 interface VNodeProps {
   key?: string | number
   ref?: any
@@ -16,6 +18,7 @@ export interface VNode<HostElement = RendererElement> {
 
   el: HostElement | null
   component: ComponentInstance | null
+  appContext: AppContext | null
 }
 
 type VNodeType =
@@ -45,6 +48,15 @@ export const createVNode = (
   props: VNodeProps = null,
   children: VNodeChildren = null
 ): VNode => {
+  let shapeFlag = 0
+  if (typeof type === 'string') {
+    shapeFlag = ShapeFlags.ELEMENT
+  } else if (isObject(type)) {
+    shapeFlag = ShapeFlags.STATEFUL_COMPONENT
+  } else if (typeof type === 'function') {
+    shapeFlag = ShapeFlags.FUNCTIONAL_COMPONENT
+  }
+
   let vnode: VNode = {
     __isVNode: true,
     type,
@@ -52,10 +64,12 @@ export const createVNode = (
     children,
     key: null,
     ref: null,
-    shapeFlag: 0,
+    shapeFlag,
     component: null,
     el: null,
+    appContext: null,
   }
+  normalizeChildren(vnode, vnode.children)
   return vnode
 }
 
@@ -81,6 +95,31 @@ export function normalizeVNode(node: VNode): VNode {
   }
 }
 
+function normalizeChildren(vnode: VNode, children: unknown) {
+  let { shapeFlag } = vnode
+  let type = 0
+  if (children == null) {
+    // 没有children
+    children = null
+  } else if (Array.isArray(children)) {
+    type = ShapeFlags.ARRAY_CHILDREN
+  } else if (isObject(children)) {
+    console.warn('children是object类型，做字符串处理。todotodo')
+    if (!children.default) {
+      type = ShapeFlags.TEXT_CHILDREN
+    }
+  } else if (typeof children === 'function') {
+    console.warn('children是function类型，todotodo')
+  } else {
+    // 都作为字符串处理
+    children = String(children)
+    type = ShapeFlags.TEXT_CHILDREN
+  }
+
+  vnode.children = children as VNodeChildren
+  vnode.shapeFlag = shapeFlag | type
+}
+
 export function cloneVNode(
   vnode: VNode,
   extraProps?: VNodeProps | null
@@ -95,5 +134,6 @@ export function cloneVNode(
     shapeFlag: vnode.shapeFlag,
     component: vnode.component,
     el: vnode.el,
+    appContext: vnode.appContext,
   }
 }
