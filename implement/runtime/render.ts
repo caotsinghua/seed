@@ -14,6 +14,7 @@ import {
   setupComponent,
 } from './component'
 import { renderComponentRoot } from './componentRenderUtils'
+import { effect } from '../reactivity/effect'
 
 const rendererOptions = {
   nextSibling(node: RendererNode) {
@@ -212,7 +213,7 @@ function setupRenderEffect(
   anchor: RendererNode,
   isSVG: boolean
 ) {
-  instance.update = function componentEffect() {
+  instance.update = effect(function componentEffect() {
     // 未挂载
     if (!instance.isMounted) {
       let vnodeHook
@@ -221,9 +222,7 @@ function setupRenderEffect(
       console.log('== 依赖收集+初次render', subTree)
       patch(null, subTree, container, anchor, instance, isSVG)
     }
-  }
-
-  instance.update()
+  })
 }
 
 function mountChildren(

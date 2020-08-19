@@ -1,4 +1,5 @@
 import { ReactiveFlags, Target, reactive } from './reactive'
+import { track, TrackOpTypes, trigger, TriggerOpTypes } from './effect'
 
 // 1. 对于一些ReactiveFlag的值的返回
 // 2. 对于数字的查询,如includes,indexof ,lastindexof是否需要track
@@ -32,7 +33,8 @@ function createGetter(isReadonly: boolean = false, shallow: boolean = false) {
     }
     if (!isReadonly) {
       // todo track
-      console.warn('监听 track', key)
+      // console.warn('监听 track', key)
+      track(target, key, TrackOpTypes.GET)
     }
     // 如果是浅层监听,可以直接返回
     if (shallow) {
@@ -60,6 +62,7 @@ function createSetter(shallow = false) {
     let oldVal = target[key]
     if (!shallow) {
       // 如果旧的值是ref,直接改变ref.value触发更新,不需要再重复触发refKey的更新
+      // 这里没有ref，先不做处理
     } else {
       // 如果是浅层监听,第二层以后的对象,不会走到这里
       // 一旦走到这里,一定是第一层
@@ -71,9 +74,11 @@ function createSetter(shallow = false) {
       if (hadKey) {
         // update
         console.debug('trigger update', key)
+        trigger(target, key, TriggerOpTypes.SET, value)
       } else {
         // add
         console.debug('trigger add key', key)
+        trigger(target, key, TriggerOpTypes.ADD, value)
       }
     }
 
@@ -90,6 +95,7 @@ function deleteProperty(target: object, key: string): boolean {
   if (hadKey && result) {
     //   delete
     console.debug('trigger delete', key)
+    trigger(target, key, TriggerOpTypes.DELETE,undefined)
   }
   return result
 }
@@ -100,6 +106,7 @@ function has(target: object, key: string): boolean {
   if (typeof key !== 'symbol') {
     //   track
     console.debug('通过has进行track', key)
+    track(target, key, TrackOpTypes.HAS)
   }
   return result
 }
