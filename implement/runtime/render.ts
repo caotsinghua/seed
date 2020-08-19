@@ -11,7 +11,9 @@ import {
   ComponentOptions,
   ComponentInstance,
   createComponentInstance,
+  setupComponent,
 } from './component'
+import { renderComponentRoot } from './componentRenderUtils'
 
 const rendererOptions = {
   nextSibling(node: RendererNode) {
@@ -97,10 +99,17 @@ export function patch(
     default:
       // 处理element和component
       if (shapeFlag & ShapeFlags.ELEMENT) {
-        console.debug('处理element patch')
-        processElement(oldNode, newNode, container, anchor, isSVG)
+        console.debug('处理element in patch')
+        processElement(
+          oldNode,
+          newNode,
+          container,
+          anchor,
+          parentComponent,
+          isSVG
+        )
       } else if (shapeFlag & ShapeFlags.COMPONENT) {
-        console.debug('处理component patch')
+        console.debug('处理component in patch')
         processComponent(
           oldNode,
           newNode,
@@ -118,12 +127,13 @@ function processElement(
   newNode: VNode,
   container: RendererElement,
   anchor: RendererNode,
+  parentComponent: ComponentInstance | null,
   isSVG: boolean
 ) {
   isSVG = isSVG || newNode.type === 'svg'
   if (!oldNode) {
     // mount
-    mountElement(newNode, container, anchor, isSVG)
+    mountElement(newNode, container, anchor, parentComponent, isSVG)
   } else {
     // patch
     console.warn('更新元素，todo')
@@ -134,6 +144,7 @@ function mountElement(
   node: VNode,
   container: RendererElement,
   anchor: RendererNode,
+  parentComponent: ComponentInstance,
   isSVG: boolean
 ) {
   const { type, shapeFlag, children } = node
@@ -149,6 +160,7 @@ function mountElement(
       children as VNode[],
       el,
       null,
+      parentComponent,
       isSVG && type !== 'foreignObject'
     )
   } else {
@@ -181,28 +193,59 @@ function mountComponent(
   container: RendererElement,
   anchor: RendererNode,
   parentComponent: ComponentInstance | null,
-  isSVG: Boolean
+  isSVG: boolean
 ) {
   const instance: ComponentInstance = (node.component = createComponentInstance(
     node,
     parentComponent
   ))
-  // TODO:绑定props
-  console.warn("需要绑定 props")
-  // 执行setup
 
+  setupComponent(instance)
+  // 绑定更新函数,依赖收集
+  setupRenderEffect(instance, node, container, anchor, isSVG)
+}
+
+function setupRenderEffect(
+  instance: ComponentInstance,
+  initialVNode: VNode,
+  container: RendererElement,
+  anchor: RendererNode,
+  isSVG: boolean
+) {
+  instance.update = function componentEffect() {
+    // 未挂载
+    if (!instance.isMounted) {
+      let vnodeHook
+      const subTree = (instance.subTree = renderComponentRoot(instance))
+      // =collect dep
+      console.log('== 依赖收集+初次render', subTree)
+      patch(null, subTree, container, anchor, instance, isSVG)
+    }
+  }
+
+  instance.update()
 }
 
 function mountChildren(
   children: VNode[],
   container: RendererElement,
   anchor: RendererNode | null = null,
+  parentComponent: ComponentInstance,
   isSVG: boolean
 ) {
   for (let i = 0; i < children.length; i++) {
     let node = normalizeVNode(children[i])
     // 挂载
-    patch(null, node, container, null, isSVG)
+    patch(null, node, container, null, parentComponent, isSVG)
+  }
+}
+// 卸载vnode
+function unmont(vnode: VNode) {
+  const { shapeFlag, el } = vnode
+  console.warn('卸载vnode,为实现')
+  if (shapeFlag & ShapeFlags.COMPONENT) {
+    // 组件类型
+  } else {
   }
 }
 

@@ -34,6 +34,7 @@ export function createApp(
           ? rootComponent
           : createVNode(rootComponent, rootProps)
         vnode.appContext = context
+        console.log("root node",vnode)
         render(vnode, container)
         isMounted = true
         app._container = container

@@ -1232,6 +1232,7 @@ var createApp_1 = require("../seed/createApp");
 var utils_1 = require("../shared/utils");
 
 var uid = 0;
+var EMPTY_OBJ = {}; // 引用
 
 function createComponentInstance(vnode, parentComponent) {
   var type = vnode.type;
@@ -1243,13 +1244,28 @@ function createComponentInstance(vnode, parentComponent) {
     subTree: null,
     parent: parentComponent,
     root: null,
-    appContext: appContext
+    appContext: appContext,
+    render: null,
+    setupContext: null,
+    ctx: null,
+    props: EMPTY_OBJ,
+    attrs: EMPTY_OBJ,
+    setupState: EMPTY_OBJ,
+    proxy: null,
+    isMounted: false,
+    isUnmounted: false,
+    isDeactivated: false,
+    update: null
   };
   instance.root = parentComponent ? parentComponent.root : instance;
+  instance.ctx = {
+    _: instance
+  }; // 作为代理对象,所有赋值给instance本身的都赋值到ctx中.
+
   return instance;
 }
 
-exports.createComponentInstance = createComponentInstance;
+exports.createComponentInstance = createComponentInstance; // 开始设置component的数据
 
 function setupComponent(instance) {
   var shapeFlag = instance.vnode.shapeFlag;
@@ -1262,27 +1278,69 @@ function setupComponent(instance) {
   return setupResult;
 }
 
+exports.setupComponent = setupComponent; // 执行setup
+
 function setupStatefulComponent(instance) {
   var Component = instance.type; // 创建proxy
-  // 执行setup
+
+  instance.proxy = new Proxy(instance.ctx, {}); // 执行setup
 
   var setup = Component.setup;
 
   if (setup) {
     // setup接受2个参数时，创建context
-    var setupContext = instance.setupContext = setup.length > 1 ? {} : null; // 暂停收集依赖
+    var setupContext = instance.setupContext = setup.length > 1 ? {} : null; // TODO:暂停收集依赖
 
-    var setupResult = setup(instance.props, setupContext); // setup执行结束
+    var setupResult = setup(instance.props, setupContext);
+    console.debug('setup结果', setupResult); // TODO:setup执行结束
 
     if (typeof setupResult === 'function') {
       // 返回render函数
       instance.render = setupResult;
     } else if (utils_1.isObject(setupResult)) {
       instance.setupState = setupResult;
+    } else {
+      console.warn('setup should return object or function,but ', setupResult);
     }
   }
+
+  finishComponentSetup(instance);
+} // 处理setup结束后的属性配置
+// 如render方法的赋值,各种配置项的初始化等
+
+
+function finishComponentSetup(instance) {
+  var Component = instance.type; // setup未返回render
+
+  if (!instance.render) {
+    // 这里不走compile
+    instance.render = Component.render || NOOP;
+  } //  不走运行时编译
+
+
+  console.log('== 处理一些配置信息 == todo==');
 }
-},{"./vnode":"../runtime/vnode.ts","../seed/createApp":"../seed/createApp.ts","../shared/utils":"../shared/utils.ts"}],"../runtime/render.ts":[function(require,module,exports) {
+
+function NOOP() {}
+},{"./vnode":"../runtime/vnode.ts","../seed/createApp":"../seed/createApp.ts","../shared/utils":"../shared/utils.ts"}],"../runtime/componentRenderUtils.ts":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+
+var vnode_1 = require("./vnode");
+
+function renderComponentRoot(instance) {
+  console.log(' === render component root', instance.render);
+  var render = instance.render; //   TODO:暂不考虑render的参数
+
+  var result = vnode_1.normalizeVNode(render(instance));
+  return result;
+}
+
+exports.renderComponentRoot = renderComponentRoot;
+},{"./vnode":"../runtime/vnode.ts"}],"../runtime/render.ts":[function(require,module,exports) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -1292,6 +1350,8 @@ Object.defineProperty(exports, "__esModule", {
 var vnode_1 = require("./vnode");
 
 var component_1 = require("./component");
+
+var componentRenderUtils_1 = require("./componentRenderUtils");
 
 var rendererOptions = {
   nextSibling: function nextSibling(node) {
@@ -1388,10 +1448,10 @@ parentComponent, isSVG) {
     default:
       // 处理element和component
       if (shapeFlag & vnode_1.ShapeFlags.ELEMENT) {
-        console.debug('处理element patch');
-        processElement(oldNode, newNode, container, anchor, isSVG);
+        console.debug('处理element in patch');
+        processElement(oldNode, newNode, container, anchor, parentComponent, isSVG);
       } else if (shapeFlag & vnode_1.ShapeFlags.COMPONENT) {
-        console.debug('处理component patch');
+        console.debug('处理component in patch');
         processComponent(oldNode, newNode, container, anchor, parentComponent, isSVG);
       }
 
@@ -1400,19 +1460,19 @@ parentComponent, isSVG) {
 
 exports.patch = patch;
 
-function processElement(oldNode, newNode, container, anchor, isSVG) {
+function processElement(oldNode, newNode, container, anchor, parentComponent, isSVG) {
   isSVG = isSVG || newNode.type === 'svg';
 
   if (!oldNode) {
     // mount
-    mountElement(newNode, container, anchor, isSVG);
+    mountElement(newNode, container, anchor, parentComponent, isSVG);
   } else {
     // patch
     console.warn('更新元素，todo');
   }
 }
 
-function mountElement(node, container, anchor, isSVG) {
+function mountElement(node, container, anchor, parentComponent, isSVG) {
   var type = node.type,
       shapeFlag = node.shapeFlag,
       children = node.children;
@@ -1424,7 +1484,7 @@ function mountElement(node, container, anchor, isSVG) {
     rendererOptions.setElementText(el, children);
   } else if (shapeFlag & vnode_1.ShapeFlags.ARRAY_CHILDREN) {
     //   children是数组
-    mountChildren(children, el, null, isSVG && type !== 'foreignObject');
+    mountChildren(children, el, null, parentComponent, isSVG && type !== 'foreignObject');
   } else {
     console.warn('node', node, '的children不是数组/text');
   } //TODO:   添加属性
@@ -1444,12 +1504,28 @@ function processComponent(oldNode, newNode, container, anchor, parentCompoennt, 
 }
 
 function mountComponent(node, container, anchor, parentComponent, isSVG) {
-  var instance = node.component = component_1.createComponentInstance(node, parentComponent); // TODO:绑定props
+  var instance = node.component = component_1.createComponentInstance(node, parentComponent);
+  component_1.setupComponent(instance); // 绑定更新函数,依赖收集
 
-  console.warn("需要绑定 props"); // 执行setup
+  setupRenderEffect(instance, node, container, anchor, isSVG);
 }
 
-function mountChildren(children, container, anchor, isSVG) {
+function setupRenderEffect(instance, initialVNode, container, anchor, isSVG) {
+  instance.update = function componentEffect() {
+    // 未挂载
+    if (!instance.isMounted) {
+      var vnodeHook = void 0;
+      var subTree = instance.subTree = componentRenderUtils_1.renderComponentRoot(instance); // =collect dep
+
+      console.log('== 依赖收集+初次render', subTree);
+      patch(null, subTree, container, anchor, instance, isSVG);
+    }
+  };
+
+  instance.update();
+}
+
+function mountChildren(children, container, anchor, parentComponent, isSVG) {
   if (anchor === void 0) {
     anchor = null;
   }
@@ -1457,8 +1533,18 @@ function mountChildren(children, container, anchor, isSVG) {
   for (var i = 0; i < children.length; i++) {
     var node = vnode_1.normalizeVNode(children[i]); // 挂载
 
-    patch(null, node, container, null, isSVG);
+    patch(null, node, container, null, parentComponent, isSVG);
   }
+} // 卸载vnode
+
+
+function unmont(vnode) {
+  var shapeFlag = vnode.shapeFlag,
+      el = vnode.el;
+  console.warn('卸载vnode,为实现');
+
+  if (shapeFlag & vnode_1.ShapeFlags.COMPONENT) {// 组件类型
+  } else {}
 } //  --------
 
 
@@ -1473,7 +1559,7 @@ function getNextAnchor(node) {
 function isSameNodeType(n1, n2) {
   return n1.type === n2.type && n1.key === n2.key;
 }
-},{"./vnode":"../runtime/vnode.ts","./component":"../runtime/component.ts"}],"../seed/createApp.ts":[function(require,module,exports) {
+},{"./vnode":"../runtime/vnode.ts","./component":"../runtime/component.ts","./componentRenderUtils":"../runtime/componentRenderUtils.ts"}],"../seed/createApp.ts":[function(require,module,exports) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -1503,6 +1589,7 @@ function createApp(rootComponent, rootProps) {
       if (!isMounted) {
         var vnode = rootComponent.__isVNode ? rootComponent : vnode_1.createVNode(rootComponent, rootProps);
         vnode.appContext = context;
+        console.log("root node", vnode);
         render_1.render(vnode, container);
         isMounted = true;
         app._container = container;
@@ -1530,8 +1617,19 @@ var _createApp = require("../seed/createApp");
 
 var _vnode = require("../runtime/vnode");
 
-var rootNode = (0, _vnode.createVNode)('h1', null, (0, _vnode.createVNode)('span', null, '测试挂载'));
-var app = (0, _createApp.createApp)(rootNode, null);
+// const rootNode = createVNode('h1', null, createVNode('span', null, '测试挂载'))
+var rootComponent = {
+  setup: function setup(props, context) {
+    console.log({
+      props: props,
+      context: context
+    });
+    return function () {
+      console.log('render 方法');
+    };
+  }
+};
+var app = (0, _createApp.createApp)(rootComponent, null);
 console.log(app);
 app.mount(document.getElementById('app'));
 },{"../seed/createApp":"../seed/createApp.ts","../runtime/vnode":"../runtime/vnode.ts"}],"node_modules/parcel/src/builtins/hmr-runtime.js":[function(require,module,exports) {
@@ -1562,7 +1660,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "62799" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "55617" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

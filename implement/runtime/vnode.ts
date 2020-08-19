@@ -27,7 +27,8 @@ type VNodeType =
   | typeof Fragment
   | typeof Text
   | typeof Comment
-type VNodeChildren = string | VNode[] | null
+export type VNodeChildAtom = VNode | string | number | boolean | null | undefined | void
+export type VNodeChildren = VNodeChildAtom[] | VNodeChildAtom
 
 export const enum ShapeFlags {
   ELEMENT = 1,
@@ -74,7 +75,7 @@ export const createVNode = (
 }
 
 // 对即将挂载的node进行处理
-export function normalizeVNode(node: VNode): VNode {
+export function normalizeVNode(node: VNodeChildAtom): VNode {
   if (node == null || typeof node === 'boolean') {
     // 创建空的注释节点
     return createVNode(Comment)
