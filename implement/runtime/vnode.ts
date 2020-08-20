@@ -2,7 +2,7 @@ import { Component, ComponentInstance } from './component'
 import { RendererElement } from './render'
 import { isObject } from 'util'
 import { AppContext } from '../seed/createApp'
-interface VNodeProps {
+export interface VNodeProps {
   key?: string | number
   ref?: any
   [key: string]: any

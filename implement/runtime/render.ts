@@ -6,6 +6,9 @@ import {
   Static,
   Fragment,
   normalizeVNode,
+  VNodeProps,
+  VNodeChildren,
+  VNodeChildAtom,
 } from './vnode'
 import {
   ComponentOptions,
@@ -14,7 +17,8 @@ import {
   setupComponent,
 } from './component'
 import { renderComponentRoot } from './componentRenderUtils'
-import { effect } from '../reactivity/effect'
+import { effect, ReactiveEffect } from '../reactivity/effect'
+import { isObject } from 'util'
 
 const rendererOptions = {
   nextSibling(node: RendererNode) {
@@ -48,6 +52,16 @@ const rendererOptions = {
       )
     }
   },
+  parentNode(el: RendererElement) {
+    if (el) {
+      return (el as HTMLElement).parentNode
+    }
+  },
+  remove(el: RendererElement) {
+    if (el) {
+      ;(el as HTMLElement).parentElement?.removeChild(el as HTMLElement)
+    }
+  },
 }
 
 export interface RendererNode {
@@ -63,7 +77,7 @@ export function render(vnode: VNode, container: RendererElement) {
   } else {
     // 卸载
     if (container._vnode) {
-      unmount(container._vnode)
+      unmont(container._vnode, null, true)
     }
   }
   container._vnode = vnode
@@ -79,7 +93,7 @@ export function patch(
 ) {
   if (oldNode && !isSameNodeType(oldNode, newNode)) {
     anchor = getNextAnchor(oldNode)
-    unmount(oldNode)
+    unmont(oldNode, parentComponent, true)
     oldNode = null
   }
   let { type, shapeFlag } = newNode
@@ -137,7 +151,8 @@ function processElement(
     mountElement(newNode, container, anchor, parentComponent, isSVG)
   } else {
     // patch
-    console.warn('更新元素，todo')
+    console.warn('---- patch element --- ')
+    patchElement(oldNode, newNode, parentComponent, isSVG)
   }
 }
 
@@ -169,8 +184,259 @@ function mountElement(
   }
 
   //TODO:   添加属性
+  patchProps(el, null, node.props)
   //   挂载
   rendererOptions.insert(el, container, anchor)
+}
+
+function patchElement(
+  oldNode: VNode,
+  newNode: VNode,
+  parentCompoennt: ComponentInstance | null,
+  isSVG: boolean
+) {
+  // 更新元素的一些属性,和children
+  const el = (newNode.el = oldNode.el)
+  const oldProps = oldNode.props || {}
+  const newProps = newNode.props || {}
+  patchProps(el, oldProps, newProps)
+  // 子元素是否是svg?
+  const isChildrenSvg = isSVG && newNode.type !== 'foreignObject'
+  // 更新children
+  patchChildren(oldNode, newNode, el, null, parentCompoennt, isChildrenSvg)
+}
+
+function patchProps(
+  el: RendererElement,
+  oldProps: VNodeProps,
+  newProps: VNodeProps
+) {
+  console.log(' --- 处理props', el)
+  // 新旧props完全一样,即node未变,直接返回
+  if (oldProps === newProps) return
+  oldProps = oldProps || {}
+  newProps = newProps || {}
+  for (let key in newProps) {
+    patchProp(el, key, oldProps[key], newProps[key])
+  }
+  for (let key in oldProps) {
+    if (!(key in newProps)) {
+      patchProp(el, key, oldProps[key], null)
+    }
+  }
+}
+
+function patchProp(
+  el: RendererElement,
+  key: string,
+  oldVal: unknown,
+  newVal: unknown
+) {
+  console.log('--- patchProp ---', el)
+  switch (key) {
+    case 'style': {
+      if (typeof newVal === 'string') {
+        el.style = newVal
+      } else if (isObject(newVal)) {
+        let styleStr = ''
+        console.log(newVal)
+        Object.keys(newVal).forEach((k) => {
+          if (newVal[k]) {
+            styleStr += `${k}:${newVal[k]};`
+          }
+        })
+        el.style = styleStr
+        console.log(styleStr)
+      } else {
+        console.warn(`${el}的style不是字符串/对象`)
+      }
+    
+      break
+    }
+    case 'class': {
+      // 类名
+      if (typeof newVal === 'string') {
+        ;(el as HTMLElement).className = newVal
+      } else if (Array.isArray(newVal)) {
+        let classStr = ''
+        for (let i = 0; i < newVal.length; i++) {
+          let cur = newVal[i]
+          if (typeof cur === 'string') {
+            classStr += `${cur} `
+          } else if (isObject(cur)) {
+            Object.keys(cur).forEach((k) => {
+              if (cur[k]) {
+                classStr += `${k} `
+              }
+            })
+          }
+        }
+        ;(el as HTMLElement).className = classStr
+      } else if (isObject(newVal)) {
+        let classStr = ''
+        Object.keys(newVal).forEach((k) => {
+          if (newVal[k]) {
+            classStr += `${k} `
+          }
+        })
+        ;(el as HTMLElement).className = classStr
+      } else {
+        console.warn(el, 'class 的值不是字符串/数组/对象')
+      }
+      break
+    }
+    default: {
+      if (key[0] === 'o' && key[1] === 'n') {
+        // 事件
+        if (oldVal) {
+          ;(el as HTMLElement).removeEventListener(key, oldVal as any)
+        } else {
+          ;(el as HTMLElement).addEventListener(key, oldVal as any)
+        }
+      } else {
+        // 其他的attribute和property
+        if (key === 'innerHTML' || key === 'textContent') {
+          // 移除所有元素
+          console.warn(` ---- 触发${key} prop更新,移除所有元素,todo ---`)
+          el[key] = newVal
+          return
+        }
+        if (key === 'value' && (el as HTMLElement).tagName === 'PROGRESS') {
+          el._value = newVal
+          el.value = newVal == null ? '' : newVal
+          return
+        }
+        if (newVal === '' && typeof el[key] === 'boolean') {
+          // 默认加key为true
+          // e.g. <select multiple> compiles to { multiple: '' }
+          el[key] = true
+        } else if (newVal == null && typeof el[key] === 'string') {
+          // e.g. <div :id="null">
+          el[key] = ''
+          ;(el as HTMLElement).removeAttribute(key)
+        } else {
+          try {
+            el[key] = newVal
+          } catch (e) {
+            console.warn('附加元素属性失败', e)
+          }
+        }
+      }
+    }
+  }
+}
+
+function patchChildren(
+  oldNode: VNode,
+  newNode: VNode,
+  container: RendererElement,
+  anchor: RendererNode,
+  parentComponent: ComponentInstance,
+  isSVG: boolean
+) {
+  console.log('更新children')
+  const oldChildren = oldNode && oldNode.children
+  const prevShapeFlag = (oldNode && oldNode.shapeFlag) || 0
+  const newChildren = newNode && newNode.children
+  const { shapeFlag } = newNode
+  // children有几种类型
+  // text，array，null
+  // 新children是text
+  if (shapeFlag & ShapeFlags.TEXT_CHILDREN) {
+    if (prevShapeFlag & ShapeFlags.ARRAY_CHILDREN) {
+      // 卸载旧的node
+      unmountChildren(oldChildren as VNode[], parentComponent, true)
+    }
+    if (newChildren !== oldChildren) {
+      rendererOptions.setElementText(container, newChildren as string)
+    }
+  } else if (shapeFlag & ShapeFlags.ARRAY_CHILDREN) {
+    // 新children是数组
+    if (prevShapeFlag & ShapeFlags.ARRAY_CHILDREN) {
+      // full diff
+      patchUnKeyedChildren(
+        oldChildren as VNode[],
+        newChildren as VNodeChildAtom[],
+        container,
+        anchor,
+        parentComponent,
+        isSVG
+      )
+    } else {
+      if (prevShapeFlag & ShapeFlags.TEXT_CHILDREN) {
+        rendererOptions.setElementText(container, '')
+      }
+      // =mount
+      mountChildren(
+        newChildren as VNodeChildAtom[],
+        container,
+        anchor,
+        parentComponent,
+        isSVG
+      )
+    }
+  } else {
+    // 新children是null
+    if (prevShapeFlag & ShapeFlags.ARRAY_CHILDREN) {
+      //  新节点null,卸载
+      unmountChildren(oldChildren as VNode[], parentComponent, true)
+    } else {
+      // 新旧都是null
+      if (prevShapeFlag & ShapeFlags.TEXT_CHILDREN) {
+        rendererOptions.setElementText(container, '')
+      }
+    }
+  }
+}
+
+function unmountChildren(
+  children: VNode[],
+  parentComponent: ComponentInstance,
+  doRemove: boolean = false,
+  start = 0
+) {
+  for (let i = start; i < children.length; i++) {
+    unmont(children[i], parentComponent, doRemove)
+  }
+}
+
+function patchUnKeyedChildren(
+  oldChildren: VNode[],
+  newChildren: VNodeChildAtom[],
+  container: RendererElement,
+  anchor: RendererNode,
+  parentComponent: ComponentInstance,
+  isSVG: boolean
+) {
+  console.log('---- patchUnKeyedChildren start ---')
+  console.log({
+    oldChildren,
+    newChildren,
+  })
+  oldChildren = oldChildren || []
+  newChildren = newChildren || []
+  let oldLen = oldChildren.length
+  let newLen = newChildren.length
+  let commonLen = Math.min(oldLen, newLen)
+  for (let i = 0; i < commonLen; i++) {
+    let o = oldChildren[i]
+    let n = (newChildren[i] = normalizeVNode(newChildren[i]))
+    patch(o, n, container, null, parentComponent, isSVG)
+  }
+  if (oldChildren > newChildren) {
+    // 删除节点
+    unmountChildren(oldChildren, parentComponent, true, commonLen)
+  } else {
+    // 挂载新节点
+    mountChildren(
+      newChildren.slice(commonLen),
+      container,
+      null,
+      parentComponent,
+      isSVG
+    )
+  }
+  console.log('---- patchUnKeyedChildren end ---')
 }
 
 function processComponent(
@@ -185,7 +451,8 @@ function processComponent(
     // 挂载组件
     mountComponent(newNode, container, anchor, parentCompoennt, isSVG)
   } else {
-    patchComponent(oldNode, newNode, container, anchor, isSVG)
+    console.log('=== patch Component === todo==')
+    // patchComponent(oldNode, newNode, container, anchor, isSVG)
   }
 }
 
@@ -219,35 +486,84 @@ function setupRenderEffect(
       let vnodeHook
       const subTree = (instance.subTree = renderComponentRoot(instance))
       // =collect dep
-      console.log('== 依赖收集+初次render', subTree)
+      console.log('== 组件依赖收集+初次render', subTree)
       patch(null, subTree, container, anchor, instance, isSVG)
+      instance.isMounted = true
+    } else {
+      // 1. 由组件自身状态改变 instance.next = null
+      // 2. 父组件更新子组件 processComponent instance.next = vnode
+      console.log('--- 组件更新 todo---')
+      let { vnode, parent } = instance
+      let next = vnode
+
+      const oldTree = instance.subTree
+      const nextTree = renderComponentRoot(instance) // 当前render重新执行
+      instance.subTree = nextTree
+      console.log('--- 组件的render更新,', {
+        oldTree,
+        nextTree,
+      })
+      patch(
+        oldTree,
+        nextTree,
+        rendererOptions.parentNode(oldTree.el),
+        getNextAnchor(oldTree),
+        instance,
+        isSVG
+      )
+      next.el = nextTree.el
     }
   })
 }
 
 function mountChildren(
-  children: VNode[],
+  children: VNodeChildAtom[],
   container: RendererElement,
   anchor: RendererNode | null = null,
   parentComponent: ComponentInstance,
   isSVG: boolean
 ) {
   for (let i = 0; i < children.length; i++) {
-    let node = normalizeVNode(children[i])
+    let node = (children[i] = normalizeVNode(children[i])) // 挂载后的children一定是vnode
     // 挂载
-    patch(null, node, container, null, parentComponent, isSVG)
+    patch(null, node, container, anchor, parentComponent, isSVG)
   }
 }
 // 卸载vnode
-function unmont(vnode: VNode) {
+function unmont(
+  vnode: VNode,
+  parentCompoennt: ComponentInstance,
+  doRemove: boolean
+) {
   const { shapeFlag, el } = vnode
   console.warn('卸载vnode,为实现')
   if (shapeFlag & ShapeFlags.COMPONENT) {
     // 组件类型
+    unmountComponent(vnode.component, doRemove)
   } else {
+    // 如果要移除的vnode有children，对每个children移除
+    if (shapeFlag & ShapeFlags.ARRAY_CHILDREN) {
+      unmountChildren(vnode.children as VNode[], parentCompoennt, doRemove)
+    }
+    if (doRemove) {
+      remove(vnode)
+    }
   }
 }
 
+function remove(vnode: VNode) {
+  const { type, el, shapeFlag } = vnode
+  rendererOptions.remove(el)
+}
+
+function unmountComponent(component: ComponentInstance, doRemove: boolean) {
+  const { update, subTree } = component
+  console.warn('--- --- 卸载component ---')
+  // 停止effect触发
+  if (update) {
+    unmont(subTree, component, doRemove)
+  }
+}
 //  --------
 
 function getNextAnchor(node: VNode) {

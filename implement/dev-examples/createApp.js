@@ -26,6 +26,16 @@ const rootComponent = {
     return function render() {
       const node = createVNode('div', null, [
         createVNode('h1', null, state.name),
+        state.name === 'test name' && createVNode('h2', null, 2),
+        createVNode(
+          'h3',
+          {
+            style: {
+              color: 'red',
+            },
+          },
+          3
+        ),
       ])
       return node
     }
@@ -37,5 +47,5 @@ app.mount(document.getElementById('app'))
 app._container.onclick = () => {
   console.log(111)
   console.log(state)
-  state.name='test2'
+  state.name = 'test2'
 }

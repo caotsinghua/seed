@@ -126,10 +126,12 @@ function createReactiveEffect<T = any>(
   fn: () => T,
   options: ReactiveEffectOptions
 ) {
+  console.log('创建effect')
   const result: ReactiveEffect<T> = function reactiveEffect(): T {
-    console.log('创建effect')
+    console.log('--- --- effect run start ---')
     if (!result.active) {
       // 该effect已经stop
+      console.log('--- --- effect run end -inactive --- ')
       return fn()
     }
 
@@ -151,6 +153,7 @@ function createReactiveEffect<T = any>(
       effectStack.pop()
       resetTraking()
       activeEffect = effectStack[effectStack.length - 1]
+      console.log('--- --- effect run end --- ')
     }
   }
   result._isEffect = true
