@@ -15,6 +15,7 @@ import {
   ComponentInstance,
   createComponentInstance,
   setupComponent,
+  updateProps,
 } from './component'
 import { renderComponentRoot } from './componentRenderUtils'
 import { effect, ReactiveEffect } from '../reactivity/effect'
@@ -163,7 +164,7 @@ function mountElement(
   parentComponent: ComponentInstance,
   isSVG: boolean
 ) {
-  const { type, shapeFlag, children } = node
+  const { type, shapeFlag, children, props } = node
   let el: RendererElement
   el = node.el = rendererOptions.createElement(type as string, isSVG)
   //   处理children
@@ -184,7 +185,9 @@ function mountElement(
   }
 
   //TODO:   添加属性
-  patchProps(el, null, node.props)
+  if (props) {
+    patchProps(el, null, node.props)
+  }
   //   挂载
   rendererOptions.insert(el, container, anchor)
 }
@@ -217,10 +220,14 @@ function patchProps(
   oldProps = oldProps || {}
   newProps = newProps || {}
   for (let key in newProps) {
+    if (isReservedKey(key)) {
+      continue
+    }
     patchProp(el, key, oldProps[key], newProps[key])
   }
   for (let key in oldProps) {
-    if (!(key in newProps)) {
+    if (!isReservedKey(key) && !(key in newProps)) {
+      // 移除旧的属性
       patchProp(el, key, oldProps[key], null)
     }
   }
@@ -250,7 +257,7 @@ function patchProp(
       } else {
         console.warn(`${el}的style不是字符串/对象`)
       }
-    
+
       break
     }
     case 'class': {
@@ -452,7 +459,7 @@ function processComponent(
     mountComponent(newNode, container, anchor, parentCompoennt, isSVG)
   } else {
     console.log('=== patch Component === todo==')
-    // patchComponent(oldNode, newNode, container, anchor, isSVG)
+    updateComponent(oldNode,newNode)
   }
 }
 
@@ -472,6 +479,15 @@ function mountComponent(
   // 绑定更新函数,依赖收集
   setupRenderEffect(instance, node, container, anchor, isSVG)
 }
+// 更新组件
+function updateComponent(oldVNode:VNode,newVNode:VNode){
+  // 直接更新
+  console.log(newVNode,oldVNode)
+  // 由于只有mountcomponent的时候才会创建vnode.compoennt,因此这里更新的时候直接赋值。
+  const instance = newVNode.component = oldVNode.component // 即将更新的组件
+  instance.next = newVNode // 新组件的vnode，一些children等参数可能变化
+  instance.update()
+}
 
 function setupRenderEffect(
   instance: ComponentInstance,
@@ -490,11 +506,18 @@ function setupRenderEffect(
       patch(null, subTree, container, anchor, instance, isSVG)
       instance.isMounted = true
     } else {
+      
       // 1. 由组件自身状态改变 instance.next = null
       // 2. 父组件更新子组件 processComponent instance.next = vnode
       console.log('--- 组件更新 todo---')
-      let { vnode, parent } = instance
-      let next = vnode
+      let { vnode, parent,next } = instance
+      const originNext = next
+      if(next){
+        // 由父组件引起的
+        updateComponentPreRender(instance,next)
+      }else{
+        next = vnode
+      }
 
       const oldTree = instance.subTree
       const nextTree = renderComponentRoot(instance) // 当前render重新执行
@@ -514,6 +537,16 @@ function setupRenderEffect(
       next.el = nextTree.el
     }
   })
+}
+
+function updateComponentPreRender(instance:ComponentInstance,nextNode:VNode){
+  nextNode.component = instance // 这一步已经在updateComponent中做过了?
+  const prevProps = instance.vnode.props
+  instance.vnode = nextNode // 重新赋值
+  instance.next = null
+  // 更新props
+  console.log(" ---- update props ---")
+  updateProps(instance,nextNode.props,prevProps)
 }
 
 function mountChildren(
@@ -575,4 +608,9 @@ function getNextAnchor(node: VNode) {
 
 function isSameNodeType(n1: VNode, n2: VNode) {
   return n1.type === n2.type && n1.key === n2.key
+}
+
+export function isReservedKey(key: string) {
+  let set = new Set(['key', 'ref'])
+  return set.has(key)
 }

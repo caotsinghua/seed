@@ -24,21 +24,19 @@ const rootComponent = {
     })
 
     return function render() {
-      const node = createVNode('div', null, [
-        createVNode('h1', null, state.name),
-        state.name === 'test name' && createVNode('h2', null, 2),
-        createVNode(
-          'h3',
-          {
-            style: {
-              color: 'red',
-            },
-          },
-          3
-        ),
-      ])
+      const node = createVNode(ChildComponent, {
+        text: state.name,
+      })
       return node
     }
+  },
+}
+
+const ChildComponent = {
+  props:['text'],
+  render(vm) {
+    console.log('渲染child', vm)
+    return createVNode('h1', null, vm.props.text)
   },
 }
 

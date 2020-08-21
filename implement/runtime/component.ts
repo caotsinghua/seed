@@ -1,6 +1,7 @@
 import { VNode, ShapeFlags, VNodeChildAtom } from './vnode'
 import { createAppContext, AppContext } from '../seed/createApp'
 import { isObject } from '../shared/utils'
+import { isReservedKey } from './render'
 
 export interface Component {}
 
@@ -13,7 +14,7 @@ export interface ComponentOptions {
     props: Data,
     context?: Data
   ): Record<string, any> | InternalRenderFunction
-
+  props?: String[]
   render?: InternalRenderFunction
 }
 
@@ -42,6 +43,7 @@ export interface ComponentInstance {
 
   // --
   update: Function | null
+  next: VNode | null // 更新子component时使用
 }
 
 export interface InternalRenderFunction {
@@ -78,6 +80,7 @@ export function createComponentInstance(
     isUnmounted: false,
     isDeactivated: false,
     update: null,
+    next: null,
   }
 
   instance.root = parentComponent ? parentComponent.root : instance
@@ -87,10 +90,11 @@ export function createComponentInstance(
 
 // 开始设置component的数据
 export function setupComponent(instance: ComponentInstance) {
-  const { shapeFlag } = instance.vnode
+  const { shapeFlag, props } = instance.vnode
   const isStateful = shapeFlag & ShapeFlags.STATEFUL_COMPONENT
   //TODO: init props
-  console.warn('初始化props数据，todo')
+  console.warn('---initProps ---')
+  initProps(instance, props, isStateful)
 
   // setup
   // 执行setup
@@ -141,3 +145,54 @@ function finishComponentSetup(instance: ComponentInstance) {
 }
 
 function NOOP() {}
+
+function initProps(
+  instance: ComponentInstance,
+  rawProps: Data | null,
+  isStateFul: number
+) {
+  const props: Data = {}
+  const attrs: Data = {}
+  setFullProps(instance, rawProps, props, attrs)
+  if (isStateFul) {
+    instance.props = props // 没有使其响应式
+  } else {
+    if (!instance.type.props) {
+      instance.props = attrs
+    } else {
+      instance.props = props
+    }
+  }
+  instance.attrs = attrs
+}
+
+export function updateProps(instance:ComponentInstance,rawProps:Data|null,prevRawProps:Data|null){
+  // const {props,attrs} = instance // 组件实例本身的props和attrs
+  // 不触发新的更新，直接重新赋值
+  // setFullProps(instance,rawProps,props,attrs)
+  initProps(instance,rawProps,1)
+  
+}
+
+function setFullProps(
+  instance: ComponentInstance,
+  rawProps: Data | null,
+  props: Data,
+  attrs: Data
+) {
+  const propsOption = instance.type.props || [] // props配置
+  if (rawProps) {
+    for (let key in rawProps) {
+      if (isReservedKey(key)) {
+        // key or ref
+        continue
+      }
+      // 分别放到props和attrs中
+      if (propsOption.includes(key)) {
+        props[key] = rawProps[key]
+      } else {
+        attrs[key] = rawProps[key]
+      }
+    }
+  }
+}
