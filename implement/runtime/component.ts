@@ -2,6 +2,7 @@ import { VNode, ShapeFlags, VNodeChildAtom } from './vnode'
 import { createAppContext, AppContext } from '../seed/createApp'
 import { isObject } from '../shared/utils'
 import { isReservedKey } from './render'
+import { LifecycleHooks } from './apiLifecycle'
 
 export interface Component {}
 
@@ -17,7 +18,7 @@ export interface ComponentOptions {
   props?: String[]
   render?: InternalRenderFunction
 }
-
+type LifecycleHook = Function[] | null
 export interface ComponentInstance {
   uid: number
   vnode: VNode | null
@@ -44,6 +45,16 @@ export interface ComponentInstance {
   // --
   update: Function | null
   next: VNode | null // 更新子component时使用
+
+  // -- hooks
+  [LifecycleHooks.BEFORE_CREATE]: LifecycleHook
+  [LifecycleHooks.CREATED]: LifecycleHook
+  [LifecycleHooks.BEFORE_MOUNT]: LifecycleHook
+  [LifecycleHooks.MOUNTED]: LifecycleHook
+  [LifecycleHooks.BEFORE_UPDATE]: LifecycleHook
+  [LifecycleHooks.UPDATED]: LifecycleHook
+  [LifecycleHooks.BEFORE_UNMOUNT]: LifecycleHook
+  [LifecycleHooks.UNMOUNTED]: LifecycleHook
 }
 
 export interface InternalRenderFunction {
@@ -52,6 +63,7 @@ export interface InternalRenderFunction {
 
 let uid = 0
 const EMPTY_OBJ = {} // 引用
+
 export function createComponentInstance(
   vnode: VNode,
   parentComponent: ComponentInstance | null
@@ -81,6 +93,14 @@ export function createComponentInstance(
     isDeactivated: false,
     update: null,
     next: null,
+    [LifecycleHooks.BEFORE_CREATE]: null,
+    [LifecycleHooks.CREATED]: null,
+    [LifecycleHooks.BEFORE_MOUNT]: null,
+    [LifecycleHooks.MOUNTED]: null,
+    [LifecycleHooks.BEFORE_UPDATE]: null,
+    [LifecycleHooks.UPDATED]: null,
+    [LifecycleHooks.BEFORE_UNMOUNT]: null,
+    [LifecycleHooks.UNMOUNTED]: null,
   }
 
   instance.root = parentComponent ? parentComponent.root : instance
@@ -88,6 +108,14 @@ export function createComponentInstance(
   return instance
 }
 
+export let currentInstance: ComponentInstance | null = null
+export function setCurrentInstance(instance: ComponentInstance | null) {
+  currentInstance = instance
+}
+export function getCurrentInstance() {
+  // 返回setup的instance 或者 正在渲染的instance
+  return currentInstance
+}
 // 开始设置component的数据
 export function setupComponent(instance: ComponentInstance) {
   const { shapeFlag, props } = instance.vnode
@@ -113,11 +141,12 @@ function setupStatefulComponent(instance: ComponentInstance) {
   if (setup) {
     // setup接受2个参数时，创建context
     const setupContext = (instance.setupContext = setup.length > 1 ? {} : null)
+    currentInstance = instance
     // TODO:暂停收集依赖
     const setupResult = setup(instance.props, setupContext)
     console.debug('setup结果', setupResult)
     // TODO:setup执行结束
-
+    currentInstance = null
     if (typeof setupResult === 'function') {
       // 返回render函数
       instance.render = setupResult as InternalRenderFunction
@@ -166,12 +195,15 @@ function initProps(
   instance.attrs = attrs
 }
 
-export function updateProps(instance:ComponentInstance,rawProps:Data|null,prevRawProps:Data|null){
+export function updateProps(
+  instance: ComponentInstance,
+  rawProps: Data | null,
+  prevRawProps: Data | null
+) {
   // const {props,attrs} = instance // 组件实例本身的props和attrs
   // 不触发新的更新，直接重新赋值
   // setFullProps(instance,rawProps,props,attrs)
-  initProps(instance,rawProps,1)
-  
+  initProps(instance, rawProps, 1)
 }
 
 function setFullProps(

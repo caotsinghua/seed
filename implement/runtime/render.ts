@@ -20,6 +20,8 @@ import {
 import { renderComponentRoot } from './componentRenderUtils'
 import { effect, ReactiveEffect } from '../reactivity/effect'
 import { isObject } from 'util'
+import { queuePostFlushCbs } from './scheduler'
+import { LifecycleHooks } from './apiLifecycle'
 
 const rendererOptions = {
   nextSibling(node: RendererNode) {
@@ -167,6 +169,7 @@ function mountElement(
   const { type, shapeFlag, children, props } = node
   let el: RendererElement
   el = node.el = rendererOptions.createElement(type as string, isSVG)
+
   //   处理children
   if (shapeFlag & ShapeFlags.TEXT_CHILDREN) {
     //   children是text
@@ -183,13 +186,18 @@ function mountElement(
   } else {
     console.warn('node', node, '的children不是数组/text')
   }
-
   //TODO:   添加属性
   if (props) {
     patchProps(el, null, node.props)
   }
   //   挂载
   rendererOptions.insert(el, container, anchor)
+  // 触发生命周期
+  queuePostFlushCbs(() => {
+    console.log(
+      '--hooks - element mounted -- vnodehook,transition-hook,directives'
+    )
+  })
 }
 
 function patchElement(
@@ -207,6 +215,10 @@ function patchElement(
   const isChildrenSvg = isSVG && newNode.type !== 'foreignObject'
   // 更新children
   patchChildren(oldNode, newNode, el, null, parentCompoennt, isChildrenSvg)
+  // 触发生命周期
+  queuePostFlushCbs(() => {
+    console.log('--hooks - element updated')
+  })
 }
 
 function patchProps(
@@ -459,7 +471,7 @@ function processComponent(
     mountComponent(newNode, container, anchor, parentCompoennt, isSVG)
   } else {
     console.log('=== patch Component === todo==')
-    updateComponent(oldNode,newNode)
+    updateComponent(oldNode, newNode)
   }
 }
 
@@ -480,11 +492,11 @@ function mountComponent(
   setupRenderEffect(instance, node, container, anchor, isSVG)
 }
 // 更新组件
-function updateComponent(oldVNode:VNode,newVNode:VNode){
+function updateComponent(oldVNode: VNode, newVNode: VNode) {
   // 直接更新
-  console.log(newVNode,oldVNode)
+  console.log(newVNode, oldVNode)
   // 由于只有mountcomponent的时候才会创建vnode.compoennt,因此这里更新的时候直接赋值。
-  const instance = newVNode.component = oldVNode.component // 即将更新的组件
+  const instance = (newVNode.component = oldVNode.component) // 即将更新的组件
   instance.next = newVNode // 新组件的vnode，一些children等参数可能变化
   instance.update()
 }
@@ -501,30 +513,47 @@ function setupRenderEffect(
     if (!instance.isMounted) {
       let vnodeHook
       const subTree = (instance.subTree = renderComponentRoot(instance))
+      // will mount
+      queuePostFlushCbs(() => {
+        console.log('-- hook - 组件即将挂载 --')
+      })
+      if(instance[LifecycleHooks.BEFORE_MOUNT]){
+        queuePostFlushCbs(instance[LifecycleHooks.BEFORE_MOUNT])
+      }
+      
       // =collect dep
       console.log('== 组件依赖收集+初次render', subTree)
       patch(null, subTree, container, anchor, instance, isSVG)
       instance.isMounted = true
+      queuePostFlushCbs(() => {
+        console.log('-- hook - 组件挂载完成 --')
+      })
+      if (instance[LifecycleHooks.MOUNTED]) {
+        queuePostFlushCbs(instance[LifecycleHooks.MOUNTED])
+      }
     } else {
-      
       // 1. 由组件自身状态改变 instance.next = null
       // 2. 父组件更新子组件 processComponent instance.next = vnode
       console.log('--- 组件更新 todo---')
-      let { vnode, parent,next } = instance
+      let { vnode, parent, next } = instance
       const originNext = next
-      if(next){
+      if (next) {
         // 由父组件引起的
-        updateComponentPreRender(instance,next)
-      }else{
+        updateComponentPreRender(instance, next)
+      } else {
         next = vnode
       }
 
-      const oldTree = instance.subTree
+      const oldTree = instance.subTree // tree是用来渲染的
       const nextTree = renderComponentRoot(instance) // 当前render重新执行
       instance.subTree = nextTree
       console.log('--- 组件的render更新,', {
         oldTree,
         nextTree,
+      })
+      // --- 触发钩子
+      queuePostFlushCbs(()=>{
+        console.log("-- hooks 组件即将更新")
       })
       patch(
         oldTree,
@@ -535,18 +564,27 @@ function setupRenderEffect(
         isSVG
       )
       next.el = nextTree.el
+      queuePostFlushCbs(()=>{
+        console.log("-- hooks 组件更新完成")
+      })
+      if(instance[LifecycleHooks.UPDATED]){
+        queuePostFlushCbs(instance[LifecycleHooks.UPDATED])
+      }
     }
   })
 }
 
-function updateComponentPreRender(instance:ComponentInstance,nextNode:VNode){
+function updateComponentPreRender(
+  instance: ComponentInstance,
+  nextNode: VNode
+) {
   nextNode.component = instance // 这一步已经在updateComponent中做过了?
   const prevProps = instance.vnode.props
-  instance.vnode = nextNode // 重新赋值
+  instance.vnode = nextNode // 重新赋值,改变vnode,对应h(Compo,[child])
   instance.next = null
   // 更新props
-  console.log(" ---- update props ---")
-  updateProps(instance,nextNode.props,prevProps)
+  console.log(' ---- update props ---')
+  updateProps(instance, nextNode.props, prevProps)
 }
 
 function mountChildren(
