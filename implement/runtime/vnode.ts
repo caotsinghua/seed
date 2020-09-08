@@ -27,7 +27,14 @@ type VNodeType =
   | typeof Fragment
   | typeof Text
   | typeof Comment
-export type VNodeChildAtom = VNode | string | number | boolean | null | undefined | void
+export type VNodeChildAtom =
+  | VNode
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | void
 export type VNodeChildren = VNodeChildAtom[] | VNodeChildAtom
 
 export const enum ShapeFlags {
@@ -37,6 +44,8 @@ export const enum ShapeFlags {
   TEXT_CHILDREN = 1 << 3,
   ARRAY_CHILDREN = 1 << 4,
   COMPONENT = ShapeFlags.FUNCTIONAL_COMPONENT | ShapeFlags.STATEFUL_COMPONENT,
+  COMPONENT_KEPT_ALIVE = 1 << 5,
+  COMPONENT_SHOULD_KEEP_ALIVE = 1 << 6,
 }
 
 export const Fragment = Symbol('Fragment')

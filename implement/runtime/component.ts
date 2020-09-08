@@ -3,6 +3,7 @@ import { createAppContext, AppContext } from '../seed/createApp'
 import { isObject } from '../shared/utils'
 import { isReservedKey } from './render'
 import { LifecycleHooks } from './apiLifecycle'
+import { initSlots } from './componentSlots'
 
 export interface Component {}
 
@@ -33,6 +34,7 @@ export interface ComponentInstance {
   // ----- state
   props: Data
   attrs: Data
+  slots: Data
   setupState: Data
   setupContext: Data | null // setup的上下文
   // --proxy
@@ -101,6 +103,7 @@ export function createComponentInstance(
     [LifecycleHooks.UPDATED]: null,
     [LifecycleHooks.BEFORE_UNMOUNT]: null,
     [LifecycleHooks.UNMOUNTED]: null,
+    slots: {},
   }
 
   instance.root = parentComponent ? parentComponent.root : instance
@@ -118,12 +121,12 @@ export function getCurrentInstance() {
 }
 // 开始设置component的数据
 export function setupComponent(instance: ComponentInstance) {
-  const { shapeFlag, props } = instance.vnode
+  const { shapeFlag, props, children } = instance.vnode
   const isStateful = shapeFlag & ShapeFlags.STATEFUL_COMPONENT
   //TODO: init props
   console.warn('---initProps ---')
   initProps(instance, props, isStateful)
-
+  initSlots(instance, children as any)
   // setup
   // 执行setup
   const setupResult = isStateful ? setupStatefulComponent(instance) : undefined
@@ -140,7 +143,13 @@ function setupStatefulComponent(instance: ComponentInstance) {
   const { setup } = Component
   if (setup) {
     // setup接受2个参数时，创建context
-    const setupContext = (instance.setupContext = setup.length > 1 ? {} : null)
+    const setupContext = (instance.setupContext =
+      setup.length > 1
+        ? {
+            attrs: instance.attrs,
+            slots: instance.slots,
+          }
+        : null)
     currentInstance = instance
     // TODO:暂停收集依赖
     const setupResult = setup(instance.props, setupContext)

@@ -22,6 +22,8 @@ import { effect, ReactiveEffect } from '../reactivity/effect'
 import { isObject } from 'util'
 import { queuePostFlushCbs } from './scheduler'
 import { LifecycleHooks } from './apiLifecycle'
+import { updateSlots } from './componentSlots'
+import { debug } from 'console'
 
 const rendererOptions = {
   nextSibling(node: RendererNode) {
@@ -306,11 +308,13 @@ function patchProp(
     }
     default: {
       if (key[0] === 'o' && key[1] === 'n') {
+        console.debug('---- 绑定事件---', el, newVal)
         // 事件
         if (oldVal) {
-          ;(el as HTMLElement).removeEventListener(key, oldVal as any)
-        } else {
-          ;(el as HTMLElement).addEventListener(key, oldVal as any)
+          ;(el as HTMLElement).removeEventListener(key.substr(2), oldVal as any)
+        }
+        if (newVal) {
+          ;(el as HTMLElement).addEventListener(key.substr(2), newVal as any)
         }
       } else {
         // 其他的attribute和property
@@ -353,7 +357,6 @@ function patchChildren(
   parentComponent: ComponentInstance,
   isSVG: boolean
 ) {
-  console.log('更新children')
   const oldChildren = oldNode && oldNode.children
   const prevShapeFlag = (oldNode && oldNode.shapeFlag) || 0
   const newChildren = newNode && newNode.children
@@ -361,6 +364,8 @@ function patchChildren(
   // children有几种类型
   // text，array，null
   // 新children是text
+  console.debug('更新children', { oldChildren, newChildren })
+
   if (shapeFlag & ShapeFlags.TEXT_CHILDREN) {
     if (prevShapeFlag & ShapeFlags.ARRAY_CHILDREN) {
       // 卸载旧的node
@@ -428,15 +433,15 @@ function patchUnKeyedChildren(
   isSVG: boolean
 ) {
   console.log('---- patchUnKeyedChildren start ---')
-  console.log({
-    oldChildren,
-    newChildren,
-  })
   oldChildren = oldChildren || []
   newChildren = newChildren || []
   let oldLen = oldChildren.length
   let newLen = newChildren.length
   let commonLen = Math.min(oldLen, newLen)
+  console.debug('patchUnKeyedChildren', {
+    oldChildren,
+    newChildren,
+  })
   for (let i = 0; i < commonLen; i++) {
     let o = oldChildren[i]
     let n = (newChildren[i] = normalizeVNode(newChildren[i]))
@@ -467,10 +472,16 @@ function processComponent(
   isSVG: boolean
 ) {
   if (oldNode == null) {
+    console.debug('old = null', { newNode })
+
+    if(newNode.shapeFlag & ShapeFlags.COMPONENT_KEPT_ALIVE){
+      console.debug("---- 该组件已经被缓存了,使用activate方法代替")
+    }
     // 挂载组件
     mountComponent(newNode, container, anchor, parentCompoennt, isSVG)
   } else {
     console.log('=== patch Component === todo==')
+    console.debug('组件更新', oldNode, newNode)
     updateComponent(oldNode, newNode)
   }
 }
@@ -494,7 +505,6 @@ function mountComponent(
 // 更新组件
 function updateComponent(oldVNode: VNode, newVNode: VNode) {
   // 直接更新
-  console.log(newVNode, oldVNode)
   // 由于只有mountcomponent的时候才会创建vnode.compoennt,因此这里更新的时候直接赋值。
   const instance = (newVNode.component = oldVNode.component) // 即将更新的组件
   instance.next = newVNode // 新组件的vnode，一些children等参数可能变化
@@ -513,17 +523,19 @@ function setupRenderEffect(
     if (!instance.isMounted) {
       let vnodeHook
       const subTree = (instance.subTree = renderComponentRoot(instance))
+
       // will mount
       queuePostFlushCbs(() => {
         console.log('-- hook - 组件即将挂载 --')
       })
-      if(instance[LifecycleHooks.BEFORE_MOUNT]){
+      if (instance[LifecycleHooks.BEFORE_MOUNT]) {
         queuePostFlushCbs(instance[LifecycleHooks.BEFORE_MOUNT])
       }
-      
+
       // =collect dep
       console.log('== 组件依赖收集+初次render', subTree)
       patch(null, subTree, container, anchor, instance, isSVG)
+      initialVNode.el = subTree.el
       instance.isMounted = true
       queuePostFlushCbs(() => {
         console.log('-- hook - 组件挂载完成 --')
@@ -547,14 +559,17 @@ function setupRenderEffect(
       const oldTree = instance.subTree // tree是用来渲染的
       const nextTree = renderComponentRoot(instance) // 当前render重新执行
       instance.subTree = nextTree
-      console.log('--- 组件的render更新,', {
-        oldTree,
-        nextTree,
-      })
+
       // --- 触发钩子
-      queuePostFlushCbs(()=>{
-        console.log("-- hooks 组件即将更新")
+      queuePostFlushCbs(() => {
+        console.log('-- hooks 组件即将更新')
       })
+      console.debug(
+        '---更新的copntainer',
+        oldTree,
+        oldTree.el,
+        rendererOptions.parentNode(oldTree.el)
+      )
       patch(
         oldTree,
         nextTree,
@@ -564,10 +579,10 @@ function setupRenderEffect(
         isSVG
       )
       next.el = nextTree.el
-      queuePostFlushCbs(()=>{
-        console.log("-- hooks 组件更新完成")
+      queuePostFlushCbs(() => {
+        console.log('-- hooks 组件更新完成')
       })
-      if(instance[LifecycleHooks.UPDATED]){
+      if (instance[LifecycleHooks.UPDATED]) {
         queuePostFlushCbs(instance[LifecycleHooks.UPDATED])
       }
     }
@@ -585,6 +600,7 @@ function updateComponentPreRender(
   // 更新props
   console.log(' ---- update props ---')
   updateProps(instance, nextNode.props, prevProps)
+  updateSlots(instance, nextNode.children as any)
 }
 
 function mountChildren(
@@ -610,6 +626,9 @@ function unmont(
   console.warn('卸载vnode,为实现')
   if (shapeFlag & ShapeFlags.COMPONENT) {
     // 组件类型
+    if(vnode.shapeFlag & ShapeFlags.COMPONENT_SHOULD_KEEP_ALIVE){
+      console.debug("--- 这个node已经在keepalive渲染,卸载走deactivate")
+    }
     unmountComponent(vnode.component, doRemove)
   } else {
     // 如果要移除的vnode有children，对每个children移除
