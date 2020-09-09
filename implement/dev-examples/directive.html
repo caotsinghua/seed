@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+    <div id="app"></div>
+    <input type="text" id="myTextField" value="Text field.">
+    <p></p>
+    <button type="button" onclick="focusMethod()">点这里将焦点设置到文本框上！</button>
+    <script>focusMethod = function getFocus() {
+            document.getElementById("myTextField").focus();
+        }</script>
+    <script src="./directive.js"></script>
+</body>
+
+</html>

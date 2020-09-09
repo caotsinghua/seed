@@ -24,6 +24,8 @@ import { queuePostFlushCbs } from './scheduler'
 import { LifecycleHooks } from './apiLifecycle'
 import { updateSlots } from './componentSlots'
 import { debug } from 'console'
+import { invokeDirectiveHook } from './directives'
+import { EDEADLK } from 'constants'
 
 const rendererOptions = {
   nextSibling(node: RendererNode) {
@@ -171,7 +173,11 @@ function mountElement(
   const { type, shapeFlag, children, props } = node
   let el: RendererElement
   el = node.el = rendererOptions.createElement(type as string, isSVG)
-
+  //  --- 触发dir - hook
+  const {dirs} = node
+  if(dirs){
+    invokeDirectiveHook(node,null,null,'beforeMount')
+  }
   //   处理children
   if (shapeFlag & ShapeFlags.TEXT_CHILDREN) {
     //   children是text
@@ -194,11 +200,15 @@ function mountElement(
   }
   //   挂载
   rendererOptions.insert(el, container, anchor)
+  
   // 触发生命周期
   queuePostFlushCbs(() => {
     console.log(
       '--hooks - element mounted -- vnodehook,transition-hook,directives'
     )
+    if(dirs){
+      invokeDirectiveHook(node,null,null,'mounted')
+    }
   })
 }
 

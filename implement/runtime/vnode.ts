@@ -19,6 +19,7 @@ export interface VNode<HostElement = RendererElement> {
   el: HostElement | null
   component: ComponentInstance | null
   appContext: AppContext | null
+  dirs: any[]
 }
 
 type VNodeType =
